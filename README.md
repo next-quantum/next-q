@@ -1,6 +1,6 @@
-# next-q 量子计算框架
+# NEXT-Q 量子计算框架
 
-next-q 是一个轻量级量子计算框架，专注于兼容 CUDA-Q kernel 的 SSA 汇编编译。该框架允许开发者使用 Python 编写量子内核函数，并将其编译为低级 SSA（静态单赋值）汇编，以便在各种量子计算平台上执行。
+NEXT-Q 是一个轻量级量子计算框架，专注于将 CUDA-Q 风格的量子内核编译为自研的 SSA（静态单赋值）汇编。该框架允许开发者使用 Python 编写 CUDA-Q 风格的量子内核函数，并将其编译为低级 SSA 汇编，以便在各种量子计算平台上执行。
 
 ## 项目特点
 
@@ -41,7 +41,7 @@ next-q 是一个轻量级量子计算框架，专注于兼容 CUDA-Q kernel 的 
 ### 安装
 
 ```bash
-git clone https://github.com/next-q/next-q.git
+git clone https://github.com/next-quantum/next-q.git
 cd next-q
 ```
 
