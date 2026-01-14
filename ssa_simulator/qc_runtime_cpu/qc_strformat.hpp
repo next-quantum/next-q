@@ -1,0 +1,26 @@
+//
+//  qc_strformat.hpp
+//  QCRuntime
+//
+//  Created by changyuan on 2018/6/12.
+//  Copyright © 2018年 BigCompute. All rights reserved.
+//
+
+#ifndef QC_STRFORMAT_HPP_
+#define QC_STRFORMAT_HPP_
+
+#include <string>
+
+namespace QC {
+
+  template<typename ... Args>
+  std::string string_format( const std::string& format, Args ... args ) {
+    size_t size = snprintf( nullptr, 0, format.c_str(), args ... ) + 1; // Extra space for '\0'
+    std::unique_ptr<char[]> buf( new char[ size ] );
+    snprintf( buf.get(), size, format.c_str(), args ... );
+    return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
+  }
+
+}
+
+#endif /* QC_STRFORMAT_HPP_ */
