@@ -23,7 +23,7 @@ enum class RegisterType {
 enum class QuantumGateType {
     X, Y, Z, H, S, T,
     ADJS, ADJT,
-    RX, RY, RZ,
+    RX, RY, RZ, R1,
     RESET,
     CNOT, SWAP,
     TOFFOLI,

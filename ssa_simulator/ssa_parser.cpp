@@ -243,10 +243,24 @@ bool SSAParser::parse_qgate(const std::string& line, SSAProgram& program) {
     // 处理控制位和angle参数
     size_t ctrl_pos = qubits_part.find("ctrl=");
     size_t angle_pos = qubits_part.find("angle=");
+    size_t comma_angle_pos = qubits_part.find(", angle=");
+    size_t comma_ctrl_pos = qubits_part.find(", ctrl=");
+    
+    // 确定angle_pos，优先使用带逗号的版本
+    if (comma_angle_pos != std::string::npos) {
+        angle_pos = comma_angle_pos;
+    }
+    
+    // 确定ctrl_pos，优先使用带逗号的版本
+    if (comma_ctrl_pos != std::string::npos) {
+        ctrl_pos = comma_ctrl_pos;
+    }
     
     // 确定targets_part的结束位置：如果有ctrl=或angle=，则到它们之前结束
     size_t targets_end = qubits_part.length();
-    if (ctrl_pos != std::string::npos) {
+    if (ctrl_pos != std::string::npos && angle_pos != std::string::npos) {
+        targets_end = std::min(ctrl_pos, angle_pos);
+    } else if (ctrl_pos != std::string::npos) {
         targets_end = ctrl_pos;
     } else if (angle_pos != std::string::npos) {
         targets_end = angle_pos;
@@ -259,9 +273,18 @@ bool SSAParser::parse_qgate(const std::string& line, SSAProgram& program) {
         // 有控制位，确定ctrls_part的结束位置
         size_t ctrls_end = qubits_part.length();
         if (angle_pos != std::string::npos && angle_pos > ctrl_pos) {
-            ctrls_end = angle_pos;
+            // 如果angle=在ctrl=之后，那么ctrls_end应该是angle_pos
+            // 同时需要考虑是否有逗号
+            if (qubits_part.substr(angle_pos, 8) == ", angle=") {
+                ctrls_end = angle_pos;
+            } else {
+                ctrls_end = angle_pos;
+            }
         }
-        ctrls_part = trim(qubits_part.substr(ctrl_pos + 5, ctrls_end - ctrl_pos - 5));
+        
+        // 提取控制位部分，跳过"ctrl="或", ctrl="
+        size_t ctrl_prefix_len = (ctrl_pos > 0 && qubits_part[ctrl_pos - 1] == ',') ? 7 : 5;
+        ctrls_part = trim(qubits_part.substr(ctrl_pos + ctrl_prefix_len, ctrls_end - ctrl_pos - ctrl_prefix_len));
     }
     
     // 解析目标量子比特
@@ -727,6 +750,7 @@ QuantumGateType SSAParser::gate_name_to_type(const std::string& gate_name) {
     if (gate_name == "rx") return QuantumGateType::RX;
     if (gate_name == "ry") return QuantumGateType::RY;
     if (gate_name == "rz") return QuantumGateType::RZ;
+    if (gate_name == "r1") return QuantumGateType::R1;
     if (gate_name == "reset") return QuantumGateType::RESET;
     if (gate_name == "cnot") return QuantumGateType::CNOT;
     if (gate_name == "swap") return QuantumGateType::SWAP;

@@ -807,6 +807,50 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
     }
     DEBUG_PRINT(control_qubits_str);
     
+    // 处理SWAP门（双量子比特门）
+    if (gate.gate_type == QuantumGateType::SWAP) {
+        if (gate.target_qubits.size() < 2) {
+            std::cerr << "Error: SWAP gate requires at least 2 target qubits" << std::endl;
+            context.error_msg = "SWAP gate requires at least 2 target qubits";
+            return false;
+        }
+        
+        unsigned int qubit1 = static_cast<unsigned int>(gate.target_qubits[0]);
+        unsigned int qubit2 = static_cast<unsigned int>(gate.target_qubits[1]);
+        
+        if (gate.control_qubits.empty()) {
+            // 普通SWAP门
+            DEBUG_PRINT("  [qc_runtime] Calling SWAP(" << qubit1 << ", " << qubit2 << ")");
+            SWAP(qubit1, qubit2);
+        } else {
+            // 受控SWAP门
+            unsigned int num_controls = static_cast<unsigned int>(gate.control_qubits.size());
+            unsigned int* controls = new unsigned int[num_controls];
+            for (size_t i = 0; i < gate.control_qubits.size(); ++i) {
+                controls[i] = static_cast<unsigned int>(gate.control_qubits[i]);
+            }
+            
+            // 构建控制 qubit 字符串用于调试输出
+            std::stringstream controls_str;
+            controls_str << "[";
+            for (size_t i = 0; i < gate.control_qubits.size(); ++i) {
+                controls_str << gate.control_qubits[i];
+                if (i < gate.control_qubits.size() - 1) {
+                    controls_str << ", ";
+                }
+            }
+            controls_str << "]";
+            
+            DEBUG_PRINT("  [qc_runtime] Calling MCSWAP(" << num_controls << ", " << controls_str.str() << ", " << qubit1 << ", " << qubit2 << ")");
+            MCSWAP(num_controls, controls, qubit1, qubit2);
+            
+            delete[] controls;
+        }
+        
+        DEBUG_PRINT("DefaultQuantumGateHandler::execute_quantum_gate() returning true");
+        return true;
+    }
+    
     // 实际执行量子门操作
     unsigned int target_qubit = static_cast<unsigned int>(gate.target_qubits[0]);
     
@@ -856,6 +900,10 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
                 case QuantumGateType::RZ:
                     DEBUG_PRINT("  [qc_runtime] Calling RZ(" << target_qubit << ", " << gate.angle << ")");
                     RZ(target_qubit, gate.angle);
+                    break;
+                case QuantumGateType::R1:
+                    DEBUG_PRINT("  [qc_runtime] Calling RZ(" << target_qubit << ", " << gate.angle << ")");
+                    R1(gate.angle, target_qubit);
                     break;
                 case QuantumGateType::RESET:
                     DEBUG_PRINT("  [qc_runtime] Calling reset(" << target_qubit << ")");
@@ -929,6 +977,10 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
             case QuantumGateType::RZ:
                 DEBUG_PRINT("  [qc_runtime] Calling MC_RZ(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
                 MC_RZ(num_controls, controls, target_qubit, gate.angle);
+                break;
+            case QuantumGateType::R1:
+                DEBUG_PRINT("  [qc_runtime] Calling MCR1(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
+                MCR1(gate.angle, num_controls, controls, target_qubit);
                 break;
             default:
                 std::cerr << "Error: Unknown controlled gate type" << std::endl;

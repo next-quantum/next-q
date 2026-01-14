@@ -49,6 +49,8 @@ class QuantumFunction(enum.Enum):
     RX = 'rx'      # 绕X轴旋转门
     RY = 'ry'      # 绕Y轴旋转门
     RZ = 'rz'      # 绕Z轴旋转门
+    R1 = 'r1'      # 绕Z轴旋转门（相位门，角度为λ/2）
+    SWAP = 'swap'  # SWAP门
 
 
 class Qubit:
@@ -449,9 +451,9 @@ class QuantumProgram:
         # 创建访问者并解析函数体
         visitor = QuantumProgramVisitor()
         # 将参数传递给访问者的变量字典
-        import inspect
-        sig = inspect.signature(self.original_func)
-        params = list(sig.parameters.keys())
+        # 从AST树中获取参数名（FunctionDef在Module的body中）
+        function_def = self.ast_tree.body[0]  # 获取函数定义节点
+        params = [arg.arg for arg in function_def.args.args]  # arg对象的arg属性是参数名
         for i, arg in enumerate(args):
             if i < len(params):
                 visitor.variables[params[i]] = arg
@@ -560,11 +562,20 @@ class ExpressionEvaluator:
 
     def evaluate(self, expr: ast.AST) -> Any:
         """评估任意Python表达式，返回其值"""
+        # 如果表达式是None，直接返回None，不发出警告
+        if expr is None:
+            return None
+        
         # 使用类型分发字典提高效率，确保覆盖所有主要AST节点类型
         handler_name = self.expr_handlers.get(type(expr))
         if handler_name:
             handler = getattr(self, handler_name)
             return handler(expr)
+        
+        # 其他情况下，检查是否是函数调用的返回值为None
+        # 如果是None类型，直接返回None，不发出警告
+        if isinstance(expr, ast.Constant) and expr.value is None:
+            return None
 
         # 尝试处理未知节点类型，提供更好的错误信息
         warnings.warn(f"不支持的表达式类型: {type(expr).__name__}, 返回None")
@@ -587,6 +598,10 @@ class ExpressionEvaluator:
         """评估二元操作表达式"""
         left = self.evaluate(expr.left)
         right = self.evaluate(expr.right)
+
+        # 如果任一操作数为None，直接返回None，避免类型错误
+        if left is None or right is None:
+            return None
 
         op_handlers = {
             ast.Add: lambda x, y: x + y,
@@ -656,7 +671,7 @@ class ExpressionEvaluator:
             func_name = expr.func.id
 
             # 内置函数处理
-            if func_name in ['range', 'enumerate']:
+            if func_name in ['range', 'enumerate', 'len']:
                 args = [self.evaluate(arg) for arg in expr.args]
                 # 统一处理：对于无效参数返回空范围/枚举，保持一致性
                 try:
@@ -664,9 +679,17 @@ class ExpressionEvaluator:
                         return range(*args)
                     elif func_name == 'enumerate':
                         return enumerate(*args)
+                    elif func_name == 'len':
+                        # 处理len()函数，返回对象的长度
+                        return len(*args)
                 except (TypeError, ValueError):
-                    # 对于无效参数，返回空的可迭代对象
-                    return range(0) if func_name == 'range' else enumerate([])
+                    # 对于无效参数，返回空的可迭代对象或0
+                    if func_name == 'range':
+                        return range(0)
+                    elif func_name == 'enumerate':
+                        return enumerate([])
+                    elif func_name == 'len':
+                        return 0
 
             # 量子函数处理
             elif func_name in ['qvector', 'qubit', 'mz']:
@@ -1285,11 +1308,18 @@ class QubitHandler:
         """统一创建量子操作，支持单个量子比特或量子向量"""
         controls = controls or []
 
-        # 直接为每个目标量子比特创建量子操作
-        for target_qubit in target_qubits:
+        # 处理双量子比特门（SWAP）
+        if gate_name == QuantumFunction.SWAP.value and len(target_qubits) >= 2:
+            # SWAP门需要两个目标量子比特，创建一个操作
             quantum_op = QuantumOperation(
-                gate_name, (target_qubit,), controls, adjoint, angle)
+                gate_name, tuple(target_qubits[:2]), controls, adjoint, angle)
             self.visitor.circuit.add_operation(quantum_op)
+        else:
+            # 单量子比特门：为每个目标量子比特创建量子操作
+            for target_qubit in target_qubits:
+                quantum_op = QuantumOperation(
+                    gate_name, (target_qubit,), controls, adjoint, angle)
+                self.visitor.circuit.add_operation(quantum_op)
 
 
 class BoolOpHandler:
@@ -1510,6 +1540,13 @@ class CallHandler:
 
     def handle_call(self, node):
         """处理函数调用，如 h(q0), mz(q0) 等"""
+        # 检查是否是内置函数调用，如 len()，这些是经典操作，不需要生成量子门
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+            if func_name in ['len', 'range', 'enumerate']:
+                # 这些是经典内置函数，不需要生成量子门，直接返回evaluator评估的结果
+                return self.visitor.evaluator.evaluate(node)
+        
         # 评估参数，直接内联_evaluate_call_args逻辑
         evaluated_args = [
             self.visitor.evaluator.evaluate(arg) for arg in node.args]
@@ -1716,6 +1753,11 @@ class CallHandler:
                 # 处理量子kernel调用，内联其操作
                 return self._handle_kernel_call(called_func, evaluated_args)
             
+            # 检查是否是内置函数，如 len, range, enumerate 等
+            if func_name in ['len', 'range', 'enumerate']:
+                # 这些是经典内置函数，不需要生成量子门，直接返回evaluator评估的结果
+                return self.visitor.evaluator.evaluate(node)
+            
             # 处理所有量子门调用，包括h, x, z等
             return self._handle_gate_call(func_name, evaluated_args)
 
@@ -1774,6 +1816,11 @@ class CallHandler:
         """处理量子kernel调用，内联其操作"""
         # 为被调用的kernel创建新的访问者，用于解析其函数体
         kernel_visitor = QuantumProgramVisitor()
+        
+        # 将父级visitor的global_env传递给新的kernel_visitor，确保可以访问第三方库
+        kernel_visitor.global_env = self.visitor.global_env
+        # 更新kernel_visitor的evaluator的global_env
+        kernel_visitor.evaluator.global_env = self.visitor.global_env
         
         # 获取被调用kernel的函数签名参数名
         import inspect
@@ -1866,8 +1913,8 @@ class CallHandler:
         angle = None
         target_args = evaluated_args.copy()
         
-        # 检查是否为旋转门（rx, ry, rz）
-        is_rotation_gate = gate_name in [QuantumFunction.RX.value, QuantumFunction.RY.value, QuantumFunction.RZ.value]
+        # 检查是否为旋转门（rx, ry, rz, r1）
+        is_rotation_gate = gate_name in [QuantumFunction.RX.value, QuantumFunction.RY.value, QuantumFunction.RZ.value, QuantumFunction.R1.value]
         
         # 对于旋转门，检查是否有角度参数
         if is_rotation_gate and len(evaluated_args) > 0:
@@ -1902,6 +1949,7 @@ class CallHandler:
         
         if attr_name == QuantumGateAttribute.CTRL.value:
             # 处理直接属性调用，如 x.ctrl(q0, q1) 或 x.ctrl(q0, sub_qubits)
+            # 或旋转门的受控调用，如 r1.ctrl(angle, q0, q1)
             if len(target_args) >= 1:
                 # 最后一个参数是目标量子比特或量子向量
                 final_target_args: List[Any] = [target_args[-1]]
@@ -2323,6 +2371,8 @@ s = QuantumGate(QuantumFunction.S.value)   # S门
 rx = QuantumGate(QuantumFunction.RX.value) # 绕X轴旋转门
 ry = QuantumGate(QuantumFunction.RY.value) # 绕Y轴旋转门
 rz = QuantumGate(QuantumFunction.RZ.value) # 绕Z轴旋转门
+r1 = QuantumGate(QuantumFunction.R1.value) # 绕Z轴旋转门（相位门，角度为λ/2）
+swap = QuantumGate(QuantumFunction.SWAP.value) # SWAP门
 
 
 class SSAAssembler:
