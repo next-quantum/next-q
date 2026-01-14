@@ -1,11 +1,3 @@
-//
-//  qc_strformat.hpp
-//  QCRuntime
-//
-//  Created by changyuan on 2018/6/12.
-//  Copyright © 2018年 BigCompute. All rights reserved.
-//
-
 #ifndef QC_STRFORMAT_HPP_
 #define QC_STRFORMAT_HPP_
 

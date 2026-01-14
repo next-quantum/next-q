@@ -1,11 +1,3 @@
-//
-//  QCRuntime.h
-//  QCRuntime
-//
-//  Created by changyuan on 2018/6/10.
-//  Copyright © 2018年 New Compute Lab. All rights reserved.
-//
-
 #ifndef QC_RUNTIME_H_
 #define QC_RUNTIME_H_
 
