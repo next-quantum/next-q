@@ -99,20 +99,20 @@ make
 cd ..
 ```
 
-### 运行示例
-
-```bash
-# 运行第一个示例（Bell 态制备）
-python examples/example_001.py
-
-# 运行第二个示例（GHZ 态制备）
-python examples/example_002.py
-```
-
 ### 基本用法
 
+1. **编译C++模拟后端**：首先编译高性能C++后端，这是运行量子程序的必要步骤：
+
+```bash
+cd ssa_simulator
+make
+cd ..
+```
+
+2. **创建Python文件**：在项目根目录创建一个名为`my_quantum_script.py`的文件，内容如下：
+
 ```python
-from quantum_framework import quantum_kernel, qubit, qvector, h, x, z, mz
+from quantum_framework import quantum_kernel, qvector, h, x, mz, sample
 
 @quantum_kernel
 def my_quantum_program():
@@ -133,6 +133,14 @@ print(ssa_assembly)
 result = sample(my_quantum_program, shots_count=1000)
 print(result)
 ```
+
+3. **执行Python文件**：在项目根目录执行以下命令运行量子程序：
+
+```bash
+python my_quantum_script.py
+```
+
+执行后，你将看到生成的SSA汇编代码和量子测量结果。
 
 ## 支持的量子操作
 
