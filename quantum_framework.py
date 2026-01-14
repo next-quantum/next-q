@@ -1,17 +1,25 @@
 import ast
 import enum
 import inspect
+import os
+import sys
 from typing import List, Dict, Any, Callable, Optional, TypeVar, Union, Tuple
-import random
+
 import astor
 import warnings
 
-# 为了兼容Python 3.10，定义Self类型
-Self = TypeVar('Self')
+# 直接使用C++后端
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'ssa_simulator')))
+import ssa_simulator_cpp
+
+# 类型定义和别名
+Self = TypeVar('Self')  # 为了兼容Python 3.10，定义Self类型
+int32 = int             # 明确的类型别名，方便将来扩展到其他类型
+float32 = float         # 明确的类型别名，方便将来扩展到其他类型
 
 
-# 比较操作符枚举
 class ComparisonOperator(enum.Enum):
+    """比较操作符枚举"""
     EQ = '=='  # 等于
     NE = '!='  # 不等于
     LT = '<'   # 小于
@@ -20,25 +28,34 @@ class ComparisonOperator(enum.Enum):
     GE = '>='  # 大于等于
 
 
-# 量子门属性枚举
 class QuantumGateAttribute(enum.Enum):
+    """量子门属性枚举"""
     CTRL = 'ctrl'  # 受控门
     ADJ = 'adj'    # 共轭转置
 
 
-# 量子函数枚举
 class QuantumFunction(enum.Enum):
+    """量子函数枚举"""
     MZ = 'mz'      # 测量操作
     QVECTOR = 'qvector'  # 创建量子向量
     QUBIT = 'qubit'      # 创建单个量子比特
+    CONTROL = 'control'  # 受控量子操作
     H = 'h'        # Hadamard门
     X = 'x'        # Pauli-X门
+    Y = 'y'        # Pauli-Y门
     Z = 'z'        # Pauli-Z门
+    T = 't'        # T门
+    S = 's'        # S门
+    RX = 'rx'      # 绕X轴旋转门
+    RY = 'ry'      # 绕Y轴旋转门
+    RZ = 'rz'      # 绕Z轴旋转门
 
 
 class Qubit:
-    def __init__(self, index: int = -1):
-        self.index: int = index
+    """量子比特类，代表量子电路中的单个量子比特"""
+    
+    def __init__(self, index: int32 = -1):
+        self.index: int32 = index
         self.id: str = f'qubit_{index}' if index >= 0 else f'qubit_{id(self)}'
 
     def __repr__(self) -> str:
@@ -46,6 +63,8 @@ class Qubit:
 
 
 class QVector:
+    """量子向量类，代表一组量子比特的集合"""
+    
     def __init__(self, size: int, start_index: int):
         self.size: int = size
         self.qubits: List[Qubit] = [
@@ -62,28 +81,53 @@ class QVector:
             return new_qvector
         return None
 
+    def __len__(self) -> int:
+        """返回量子向量的大小"""
+        return self.size
+
+    def front(self) -> Qubit:
+        """返回量子向量的第一个量子比特"""
+        return self.qubits[0] if self.size > 0 else None
+
+    def back(self) -> Qubit:
+        """返回量子向量的最后一个量子比特"""
+        return self.qubits[-1] if self.size > 0 else None
+
+    def size(self) -> int:
+        """返回量子向量的大小"""
+        return self.size
+
+    def empty(self) -> bool:
+        """检查量子向量是否为空"""
+        return self.size == 0
+
     def __repr__(self) -> str:
         return f'qvector({self.size})'
 
 
 class QuantumOperation:
+    """量子操作类，代表量子电路中的一个操作"""
+    
     def __init__(
             self,
             gate_name: str,
             qubits: tuple,
             controls: list,
-            adjoint: bool):
+            adjoint: bool,
+            angle: Optional[float] = None):
         self.gate_name: str = gate_name
         self.qubits: tuple = qubits
         self.controls: List[Qubit] = controls
         self.adjoint: bool = adjoint
+        self.angle: Optional[float] = angle
 
     def __repr__(self) -> str:
         adjoint_str: str = '.adj' if self.adjoint else ''
         ctrl_str: str = f'.ctrl({self.controls})' if self.controls else ''
+        angle_str: str = f'({self.angle})' if self.angle is not None else ''
         qubits_repr = f'([{self.qubits[0]}])' if len(
             self.qubits) == 1 else f'{self.qubits}'
-        return f'{self.gate_name}{ctrl_str}{adjoint_str}{qubits_repr}'
+        return f'{self.gate_name}{angle_str}{ctrl_str}{adjoint_str}{qubits_repr}'
 
 
 class ControlledGate:
@@ -94,29 +138,62 @@ class ControlledGate:
         self.controls: List[Qubit] = controls
         self.adjoint: bool = adjoint
 
-    def __call__(self,
-                 target_qubits: Union[Qubit,
-                                      List[Qubit]]) -> QuantumOperation:
+    def adj(self) -> 'ControlledGate':
+        """返回一个带有adjoint标志的新受控门"""
+        return ControlledGate(self.gate_name, self.controls, not self.adjoint)
+
+    def __call__(self, *args, **kwargs) -> QuantumOperation:
         """处理目标比特调用，如 ([q1])"""
+        # 检查是否有角度参数，用于旋转门
+        angle = kwargs.get('angle', None)
+        if angle is None and len(args) > 0 and isinstance(args[-1], (int, float)):
+            # 角度可能作为最后一个位置参数传递
+            angle = args[-1]
+            # 移除角度参数，剩下的是量子比特参数
+            args = args[:-1]
+        
+        # 对于旋转门的adjoint操作，角度取负值
+        if self.adjoint and angle is not None:
+            angle = -angle
+            
+        target_qubits = args[0] if len(args) > 0 else ()
         if isinstance(target_qubits, list):
             # 支持 [q1] 形式
             target_qubits = tuple(target_qubits)
+        elif not isinstance(target_qubits, tuple):
+            # 支持单个量子比特形式：q1
+            target_qubits = (target_qubits,)
 
         return QuantumOperation(
             self.gate_name,
             target_qubits,
             self.controls,
-            self.adjoint)
+            self.adjoint,
+            angle)
 
 
 class QuantumGate:
+    """量子门类，代表量子电路中的一个量子门"""
+    
     def __init__(self, name: str):
         self.name: str = name
         self.adjoint: bool = False
         self.controls: List[Qubit] = []
 
     def __call__(self, *args, **kwargs) -> QuantumOperation:
-        return QuantumOperation(self.name, args, self.controls, self.adjoint)
+        # 检查是否有角度参数，用于旋转门
+        angle = kwargs.get('angle', None)
+        if angle is None and len(args) > 0 and isinstance(args[-1], (int, float)):
+            # 角度可能作为最后一个位置参数传递
+            angle = args[-1]
+            # 移除角度参数，剩下的是量子比特参数
+            args = args[:-1]
+        
+        # 对于旋转门的adjoint操作，角度取负值
+        if self.adjoint and angle is not None:
+            angle = -angle
+            
+        return QuantumOperation(self.name, args, self.controls, self.adjoint, angle)
 
     def ctrl(self, *args) -> Union['ControlledGate', 'QuantumOperation']:
         """
@@ -156,6 +233,8 @@ class QuantumGate:
 
 
 class Measurement:
+    """测量类，代表量子电路中的一个测量操作"""
+    
     def __init__(self, qubit: Qubit, measurement_reg: Optional[int] = None):
         self.qubit: Qubit = qubit
         self.measurement_reg: Optional[int] = measurement_reg  # 测量寄存器编号
@@ -169,6 +248,8 @@ class Measurement:
 
 
 class MeasureToClassicalOperation:
+    """测量结果到经典寄存器的赋值操作类"""
+    
     def __init__(
             self,
             measurement_reg: int,
@@ -184,6 +265,8 @@ class MeasureToClassicalOperation:
 
 
 class AllOperation:
+    """All操作类，检查所有输入寄存器是否都为1"""
+    
     def __init__(
             self,
             input_regs: List[int],
@@ -199,6 +282,8 @@ class AllOperation:
 
 
 class AnyOperation:
+    """Any操作类，检查任意输入寄存器是否为1"""
+    
     def __init__(
             self,
             input_regs: List[int],
@@ -214,6 +299,8 @@ class AnyOperation:
 
 
 class AndOperation:
+    """And操作类，执行逻辑与操作"""
+    
     def __init__(self, left_reg: int, right_reg: int, output_reg: int):
         self.left_reg: int = left_reg  # 左操作数经典寄存器
         self.right_reg: int = right_reg  # 右操作数经典寄存器
@@ -224,6 +311,8 @@ class AndOperation:
 
 
 class OrOperation:
+    """Or操作类，执行逻辑或操作"""
+    
     def __init__(self, left_reg: int, right_reg: int, output_reg: int):
         self.left_reg: int = left_reg  # 左操作数经典寄存器
         self.right_reg: int = right_reg  # 右操作数经典寄存器
@@ -234,6 +323,8 @@ class OrOperation:
 
 
 class XorOperation:
+    """Xor操作类，执行逻辑异或操作"""
+    
     def __init__(self, left_reg: int, right_reg: int, output_reg: int):
         self.left_reg: int = left_reg  # 左操作数经典寄存器
         self.right_reg: int = right_reg  # 右操作数经典寄存器
@@ -244,8 +335,8 @@ class XorOperation:
 
 
 class VarQubitOperation:
-    """表示根据经典寄存器索引动态获取量子比特的操作"""
-
+    """动态量子比特操作类，表示根据经典寄存器索引动态获取量子比特"""
+    
     def __init__(self, var_name: str, index_reg: int, qvector_size: int):
         self.var_name: str = var_name  # 变量名
         self.index_reg: int = index_reg  # 存储量子比特索引的经典寄存器
@@ -256,6 +347,8 @@ class VarQubitOperation:
 
 
 class Condition:
+    """条件类，代表量子电路中的条件分支"""
+    
     def __init__(
             self,
             classical_reg: int,
@@ -272,6 +365,8 @@ class Condition:
 
 
 class QuantumCircuit:
+    """量子电路类，代表完整的量子电路"""
+    
     def __init__(self):
         # 可以包含 QuantumOperation、Condition 或 Measurement
         self.operations: List[Any] = []
@@ -299,6 +394,8 @@ class QuantumCircuit:
 
 
 class QuantumProgram:
+    """量子程序类，代表完整的量子程序"""
+    
     def __init__(
             self,
             circuit: QuantumCircuit,
@@ -307,6 +404,7 @@ class QuantumProgram:
         self.circuit: QuantumCircuit = circuit
         self.source_code: str = source_code
         self.original_func: Callable = original_func
+        self.ast_tree = None
 
     def __repr__(self) -> str:
         func_name: str = self.original_func.__name__
@@ -323,18 +421,18 @@ class QuantumProgram:
                 operations_str.append(f"  {i+1}. {op}")
             elif isinstance(op, Condition):
                 operations_str.append(f"  {i+1}. {op}")
-                operations_str.append(f"      - Then branch operations:")
+                operations_str.append("      - Then branch operations:")
                 if op.then_operations:
                     for j, then_op in enumerate(op.then_operations):
                         operations_str.append(f"          {j+1}. {then_op}")
                 else:
-                    operations_str.append(f"          (no operations)")
-                operations_str.append(f"      - Else branch operations:")
+                    operations_str.append("          (no operations)")
+                operations_str.append("      - Else branch operations:")
                 if op.else_operations:
                     for j, else_op in enumerate(op.else_operations):
                         operations_str.append(f"          {j+1}. {else_op}")
                 else:
-                    operations_str.append(f"          (no operations)")
+                    operations_str.append("          (no operations)")
             elif isinstance(op, Measurement):
                 # 显示测量操作，使用测量寄存器而非经典寄存器
                 operations_str.append(f"  {i+1}. {op}")
@@ -346,8 +444,27 @@ class QuantumProgram:
                 f"Source Code:\n'''\n{self.source_code}\n'''\n"
                 f"Circuit Operations:\n{chr(10).join(operations_str)}")
 
-    def generate_ssa_assembly(self) -> str:
+    def generate_ssa_assembly(self, *args, **kwargs) -> str:
         """生成SSA低级汇编"""
+        # 创建访问者并解析函数体
+        visitor = QuantumProgramVisitor()
+        # 将参数传递给访问者的变量字典
+        import inspect
+        sig = inspect.signature(self.original_func)
+        params = list(sig.parameters.keys())
+        for i, arg in enumerate(args):
+            if i < len(params):
+                visitor.variables[params[i]] = arg
+        
+        # 将当前函数的全局作用域传递给访问者，以便查找被调用的量子kernel
+        visitor.global_env = self.original_func.__globals__
+        # 更新evaluator的global_env
+        visitor.evaluator.global_env = self.original_func.__globals__
+        
+        # 解析函数体
+        visitor.visit(self.ast_tree.body[0])
+        self.circuit = visitor.circuit
+        
         assembler = SSAAssembler()
         return assembler.generate(self)
 
@@ -404,6 +521,8 @@ def _extract_reg_from_compare(compare: ast.Compare, visitor) -> Optional[int]:
 
 
 class ExpressionEvaluator:
+    """表达式求值器类，用于评估Python表达式"""
+    
     # 类级别的表达式处理器字典，避免每次调用evaluate时重复创建
     expr_handlers = {
         # 常量和基本类型
@@ -435,8 +554,9 @@ class ExpressionEvaluator:
         ast.JoinedStr: '_eval_joined_str',
     }
 
-    def __init__(self, variables):
+    def __init__(self, variables, global_env=None):
         self.variables = variables
+        self.global_env = global_env
 
     def evaluate(self, expr: ast.AST) -> Any:
         """评估任意Python表达式，返回其值"""
@@ -458,6 +578,9 @@ class ExpressionEvaluator:
         """评估变量名表达式"""
         if expr.id in self.variables:
             return self.variables[expr.id]
+        # 检查是否是全局变量（从调用者的全局作用域）
+        elif self.global_env and expr.id in self.global_env:
+            return self.global_env[expr.id]
         return None
 
     def _eval_binop(self, expr: ast.BinOp) -> Any:
@@ -549,6 +672,13 @@ class ExpressionEvaluator:
             elif func_name in ['qvector', 'qubit', 'mz']:
                 # 对于量子函数调用，返回None，因为它们在visit_Call中处理
                 return None
+        elif isinstance(expr.func, ast.Attribute):
+            # 处理方法调用，如 qubits.front()
+            obj = self.evaluate(expr.func.value)
+            method_name = expr.func.attr
+            args = [self.evaluate(arg) for arg in expr.args]
+            if obj is not None:
+                return getattr(obj, method_name)(*args)
         return None
 
     def _eval_subscript(self, expr: ast.Subscript) -> Any:
@@ -644,9 +774,9 @@ class ExpressionEvaluator:
 
 
 class LoopHandler:
-    """处理循环语句相关的类
-
-    该类负责处理量子框架中的for和while循环语句，包括：
+    """循环处理类，负责处理量子框架中的for和while循环语句
+    
+    包括：
     - 循环条件评估
     - 循环体执行
     - 循环变量管理
@@ -762,7 +892,7 @@ class LoopHandler:
                 if condition_result:
                     self._visit_loop_body(node)
                 return
-        except (ValueError, TypeError, AttributeError) as e:
+        except (ValueError, TypeError, AttributeError):
             # 无法评估条件表达式，发出警告并跳过
             import warnings
             warnings.warn(
@@ -771,7 +901,7 @@ class LoopHandler:
 
 
 class ConditionHandler:
-    """处理条件语句相关的类"""
+    """条件处理类，负责处理量子框架中的条件语句"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -979,7 +1109,7 @@ class ConditionHandler:
 
 
 class MeasurementHandler:
-    """处理测量相关操作的类"""
+    """测量处理类，负责处理量子框架中的测量操作"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -1050,7 +1180,7 @@ class MeasurementHandler:
 
 
 class QubitHandler:
-    """处理量子比特相关操作的类"""
+    """量子比特处理类，负责处理量子比特相关操作"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -1150,19 +1280,20 @@ class QubitHandler:
             gate_name: str,
             target_qubits: List[Qubit],
             controls: List[Qubit] = None,
-            adjoint: bool = False) -> None:
+            adjoint: bool = False,
+            angle: Optional[float] = None) -> None:
         """统一创建量子操作，支持单个量子比特或量子向量"""
         controls = controls or []
 
         # 直接为每个目标量子比特创建量子操作
         for target_qubit in target_qubits:
             quantum_op = QuantumOperation(
-                gate_name, (target_qubit,), controls, adjoint)
+                gate_name, (target_qubit,), controls, adjoint, angle)
             self.visitor.circuit.add_operation(quantum_op)
 
 
 class BoolOpHandler:
-    """处理布尔操作相关的类"""
+    """布尔操作处理类，负责处理量子框架中的布尔操作"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -1372,7 +1503,7 @@ class BoolOpHandler:
 
 
 class CallHandler:
-    """处理函数调用相关的类"""
+    """函数调用处理类，负责处理量子框架中的函数调用"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -1396,6 +1527,26 @@ class CallHandler:
                 node, var_qubit_info, dynamic_var_name)
             return None
         else:
+            # 特殊处理：检查是否是量子kernel调用（直接通过函数对象检查）
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+                # 尝试获取函数对象：先从变量中找，再从全局中找
+                func_obj = None
+                
+                # 从当前作用域变量中查找
+                if func_name in self.visitor.variables:
+                    func_obj = self.visitor.variables[func_name]
+                # 从调用者的全局作用域查找
+                elif hasattr(self.visitor, 'global_env'):
+                    func_obj = self.visitor.global_env.get(func_name)
+                # 尝试获取调用者的全局作用域
+                elif hasattr(self.visitor, 'original_func'):
+                    func_obj = getattr(self.visitor.original_func.__globals__, func_name, None)
+                
+                if isinstance(func_obj, QuantumProgram):
+                    # 处理量子kernel调用，内联其操作
+                    return self._handle_kernel_call(func_obj, evaluated_args)
+            
             # 正常处理函数调用，传递保存的变量名和评估后的参数
             return self._dispatch_call(
                 node, var_name=var_name, evaluated_args=evaluated_args)
@@ -1498,7 +1649,73 @@ class CallHandler:
         elif func_name == QuantumFunction.QUBIT.value:
             # 处理单个量子比特创建
             return self._handle_qubit_call(var_name, return_value)
+        elif func_name == QuantumFunction.CONTROL.value:
+            # 处理受控量子操作: control(kernel, control_qubits, *target_qubits)
+            if len(evaluated_args) < 2:
+                raise ValueError("control() expects at least 2 arguments: kernel, control_qubits, *target_qubits")
+            
+            kernel = evaluated_args[0]
+            control_qubits = evaluated_args[1]
+            target_qubits = evaluated_args[2:]
+            
+            if not isinstance(kernel, QuantumProgram):
+                raise ValueError("First argument to control() must be a quantum_kernel")
+            
+            # 将控制 qubits 转换为列表
+            if isinstance(control_qubits, QVector):
+                control_qubits_list = list(control_qubits.qubits)
+            elif isinstance(control_qubits, Qubit):
+                control_qubits_list = [control_qubits]
+            else:
+                control_qubits_list = control_qubits
+            
+            # 为被调用的kernel创建新的访问者，用于解析其函数体
+            kernel_visitor = QuantumProgramVisitor()
+            
+            # 获取被调用kernel的函数签名参数名
+            import inspect
+            sig = inspect.signature(kernel.original_func)
+            params = list(sig.parameters.keys())
+            
+            # 检查目标qubit数量是否与kernel参数数量匹配
+            if len(target_qubits) != len(params):
+                raise ValueError(f"Kernel expects {len(params)} qubits, but {len(target_qubits)} were provided")
+            
+            # 将目标qubits映射到kernel的参数变量
+            for i, param in enumerate(params):
+                kernel_visitor.variables[param] = target_qubits[i]
+            
+            # 解析kernel函数体，生成电路操作
+            kernel_visitor.visit(kernel.ast_tree.body[0])
+            
+            # 内联kernel的操作到当前电路，并添加控制位
+            for op in kernel_visitor.circuit.operations:
+                # 创建新的量子操作，添加控制位
+                controlled_op = QuantumOperation(
+                    op.gate_name,
+                    op.qubits,
+                    control_qubits_list,
+                    op.adjoint
+                )
+                self.visitor.circuit.add_operation(controlled_op)
+            
+            return None
         else:
+            # 检查是否是量子kernel调用
+            # 首先检查是否是变量，然后检查是否是全局函数
+            called_func = None
+            
+            # 检查是否是变量中的量子kernel
+            if func_name in self.visitor.variables:
+                called_func = self.visitor.variables[func_name]
+            # 检查是否是全局函数中的量子kernel
+            elif func_name in self.visitor.global_env:
+                called_func = self.visitor.global_env[func_name]
+            
+            if isinstance(called_func, QuantumProgram):
+                # 处理量子kernel调用，内联其操作
+                return self._handle_kernel_call(called_func, evaluated_args)
+            
             # 处理所有量子门调用，包括h, x, z等
             return self._handle_gate_call(func_name, evaluated_args)
 
@@ -1553,16 +1770,44 @@ class CallHandler:
             return qubit
         return None
 
+    def _handle_kernel_call(self, program: QuantumProgram, evaluated_args: List[Any]) -> None:
+        """处理量子kernel调用，内联其操作"""
+        # 为被调用的kernel创建新的访问者，用于解析其函数体
+        kernel_visitor = QuantumProgramVisitor()
+        
+        # 获取被调用kernel的函数签名参数名
+        import inspect
+        sig = inspect.signature(program.original_func)
+        params = list(sig.parameters.keys())
+        
+        # 将当前调用的参数映射到kernel的参数变量
+        for i, arg in enumerate(evaluated_args):
+            if i < len(params):
+                kernel_visitor.variables[params[i]] = arg
+        
+        # 解析kernel函数体，生成电路操作
+        kernel_visitor.visit(program.ast_tree.body[0])
+        
+        # 内联kernel的操作到当前电路
+        for op in kernel_visitor.circuit.operations:
+            # 直接添加操作到当前电路
+            self.visitor.circuit.add_operation(op)
+        
+        return None
+
     def _handle_gate_call(
             self,
             gate_name: str,
             evaluated_args: List[Any]) -> None:
         """处理量子门调用"""
+        # 提取旋转门参数
+        angle, target_args = self._extract_rotation_params(gate_name, evaluated_args)
+        
         # 应用量子门到每个量子比特，支持表达式索引：qubits[0 + 1]
         target_qubits = self.visitor.qubit_handler.get_target_qubits(
-            evaluated_args)
+            target_args)
         self.visitor.qubit_handler.create_quantum_operation(
-            gate_name, target_qubits)
+            gate_name, target_qubits, angle=angle)
         return None
 
     def _handle_chain_call(self,
@@ -1572,16 +1817,20 @@ class CallHandler:
         """处理链式调用，如 x.adj()(q0) 或 x.ctrl(q0)(q1) 或 x.ctrl(q0).adj()(q1)"""
         # 使用传递的评估后参数，避免重复评估
         if evaluated_args is None:
-            target_args: List[Any] = [
+            evaluated_args_list: List[Any] = [
                 self.visitor.evaluator.evaluate(arg) for arg in node.args]
         else:
-            target_args = evaluated_args
-
-        target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
-            target_args)
+            evaluated_args_list = evaluated_args
 
         # 从链式调用中提取门名和属性信息
         gate_name = self._get_gate_name(node.func.func.value)
+        
+        # 提取旋转门参数
+        angle, target_args = self._extract_rotation_params(gate_name, evaluated_args_list)
+        
+        target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
+            target_args)
+
         adjoint = False
         controls = []
 
@@ -1609,8 +1858,30 @@ class CallHandler:
 
         # 创建量子操作
         self.visitor.qubit_handler.create_quantum_operation(
-            gate_name, target_qubits, controls, adjoint)
+            gate_name, target_qubits, controls, adjoint, angle)
         return None
+
+    def _extract_rotation_params(self, gate_name: str, evaluated_args: List[Any]) -> Tuple[Optional[float], List[Any]]:
+        """提取旋转门的角度参数，统一处理旋转门和普通门"""
+        angle = None
+        target_args = evaluated_args.copy()
+        
+        # 检查是否为旋转门（rx, ry, rz）
+        is_rotation_gate = gate_name in [QuantumFunction.RX.value, QuantumFunction.RY.value, QuantumFunction.RZ.value]
+        
+        # 对于旋转门，检查是否有角度参数
+        if is_rotation_gate and len(evaluated_args) > 0:
+            # 检查最后一个参数是否为角度
+            if isinstance(evaluated_args[-1], (int, float)):
+                # 旋转门：最后一个参数是角度，其余是目标量子比特
+                angle = evaluated_args[-1]
+                target_args = evaluated_args[:-1]
+            # 否则尝试第一个参数是否为角度（兼容旧格式）
+            elif isinstance(evaluated_args[0], (int, float)):
+                angle = evaluated_args[0]
+                target_args = evaluated_args[1:]
+        
+        return angle, target_args
 
     def _handle_attribute_call(self,
                                node: ast.Call,
@@ -1626,36 +1897,39 @@ class CallHandler:
             evaluated_args: List[Any] = [
                 self.visitor.evaluator.evaluate(arg) for arg in node.args]
 
+        # 提取旋转门参数
+        angle, target_args = self._extract_rotation_params(gate_name, evaluated_args)
+        
         if attr_name == QuantumGateAttribute.CTRL.value:
             # 处理直接属性调用，如 x.ctrl(q0, q1) 或 x.ctrl(q0, sub_qubits)
-            if len(evaluated_args) >= 2:
+            if len(target_args) >= 1:
                 # 最后一个参数是目标量子比特或量子向量
-                target_args: List[Any] = [evaluated_args[-1]]
+                final_target_args: List[Any] = [target_args[-1]]
                 # 前面的参数是控制量子比特
-                control_args: List[Any] = evaluated_args[:-1]
+                control_args: List[Any] = target_args[:-1]
 
                 # 获取目标量子比特列表
                 target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
-                    target_args)
+                    final_target_args)
                 # 获取控制量子比特列表
                 valid_controls: List[Qubit] = _get_qubits_from_args(
                     control_args)
 
                 # 为每个目标量子比特创建量子操作
                 self.visitor.qubit_handler.create_quantum_operation(
-                    gate_name, target_qubits, valid_controls, False)
+                    gate_name, target_qubits, valid_controls, False, angle)
         elif attr_name == QuantumGateAttribute.ADJ.value:
             # 处理直接属性调用，如 x.adj(q0) 或 z.adj(sub_qubits)
             target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
-                evaluated_args)
+                target_args)
             self.visitor.qubit_handler.create_quantum_operation(
-                gate_name, target_qubits, adjoint=True)
+                gate_name, target_qubits, adjoint=True, angle=angle)
 
         return None
 
 
 class AssignmentHandler:
-    """处理各种赋值操作的类"""
+    """赋值处理类，负责处理量子框架中的赋值操作"""
 
     def __init__(self, visitor):
         self.visitor = visitor
@@ -1910,16 +2184,19 @@ class AssignmentHandler:
 
 
 class QuantumProgramVisitor(ast.NodeVisitor):
+    """量子程序访问者类，用于解析量子程序的AST"""
+    
     def __init__(self):
         self.circuit: QuantumCircuit = QuantumCircuit()
         self.variables: Dict[str, Any] = {}
+        self.global_env: Dict[str, Any] = {}  # 保存全局作用域，用于查找被调用的量子kernel
 
         self.var_to_classical_reg: Dict[str, int] = {}  # 变量名到经典寄存器的映射
         self.next_classical_reg: int = 0  # 下一个可用的经典寄存器编号
         self.measurement_to_classical: Dict[int, int] = {}  # 测量寄存器到经典寄存器的映射
 
         # 创建表达式求值器实例
-        self.evaluator = ExpressionEvaluator(self.variables)
+        self.evaluator = ExpressionEvaluator(self.variables, self.global_env)
 
         # 创建外部处理类实例
         self.assignment_handler = AssignmentHandler(self)
@@ -1973,8 +2250,8 @@ class QuantumProgramVisitor(ast.NodeVisitor):
         self.loop_handler.handle_while(node)
 
 
-# 全局变量
-_current_target = 'cpu'
+# 全局配置变量
+_current_target = 'cpu'  # 后端目标设置
 
 
 def set_target(target: str):
@@ -1994,92 +2271,62 @@ def quantum_kernel(func: Callable) -> QuantumProgram:
     # 解析AST
     tree: ast.Module = ast.parse(dedented_source)
 
-    # 创建访问者并访问AST中的函数定义
-    visitor = QuantumProgramVisitor()
-    # 直接访问函数定义，无需遍历整个模块
-    visitor.visit(tree.body[0])
-
-    # 创建量子程序对象
-    program: QuantumProgram = QuantumProgram(visitor.circuit, source, func)
+    # 创建量子程序对象，暂不解析函数体
+    program: QuantumProgram = QuantumProgram(None, source, func)
+    # 保存AST以便后续解析
+    program.ast_tree = tree
     return program
 
 
-def sample(program: QuantumProgram, shots_count: int = 1000) -> Dict[str, int]:
+def sample(program: QuantumProgram, *args, shots_count: int = 1000, **kwargs) -> Dict[str, int]:
     """运行量子程序并返回测量结果"""
-    # 这里是简化的sample实现，实际应该调用后端执行
-    results = {}
 
-    for _ in range(shots_count):
-        # 模拟量子比特状态
-        qubit_states = {
-            qubit: random.randint(
-                0, 1) for qubit in program.circuit.qubits}
-        measurement_results = []
-        classical_registers = {}
-
-        # 遍历所有操作，包括条件分支和测量
-        for op in program.circuit.operations:
-            if isinstance(op, QuantumOperation):
-                # 处理量子操作（这里简化处理，实际应该更新量子状态）
-                pass
-            elif isinstance(op, Condition):
-                # 处理条件分支
-                # 获取经典寄存器值
-                if op.classical_reg in classical_registers:
-                    reg_value = classical_registers[op.classical_reg]
-                else:
-                    # 模拟经典寄存器值
-                    reg_value = random.choice([0, 1])
-                    classical_registers[op.classical_reg] = reg_value
-
-                # 评估条件
-                condition_met = False
-                if op.operator == ComparisonOperator.EQ:
-                    condition_met = (reg_value == op.value)
-                elif op.operator == ComparisonOperator.NE:
-                    condition_met = (reg_value != op.value)
-                elif op.operator == ComparisonOperator.LT:
-                    condition_met = (reg_value < op.value)
-                elif op.operator == ComparisonOperator.LE:
-                    condition_met = (reg_value <= op.value)
-                elif op.operator == ComparisonOperator.GT:
-                    condition_met = (reg_value > op.value)
-                elif op.operator == ComparisonOperator.GE:
-                    condition_met = (reg_value >= op.value)
-
-                # 记录条件结果
-                measurement_results.append(int(condition_met))
-            elif isinstance(op, Measurement):
-                # 处理测量操作，记录测量结果
-                result = qubit_states[op.qubit]
-                measurement_results.append(result)
-                classical_registers[op.qubit] = result
-
-        # 生成测量结果字符串
-        bits = ''.join(str(result) for result in measurement_results)
-        results[bits] = results.get(bits, 0) + 1
-
+    # 创建模拟器实例
+    simulator = ssa_simulator_cpp.SSASimulator()
+    
+    # 生成SSA汇编代码，传递args作为prog的参数
+    ssa_assembly = program.generate_ssa_assembly(*args, **kwargs)
+    
+    # 加载SSA汇编代码到模拟器
+    load_result = simulator.load_ssa_assembly(ssa_assembly)
+    if not load_result:
+        raise RuntimeError(f"Failed to load SSA assembly: {simulator.get_error()}")
+    
+    # 调用sample方法执行模拟
+    results = simulator.sample(shots_count)
+    
     return results
 
 
-# 创建量子门对象
-h = QuantumGate('h')
-x = QuantumGate('x')
-z = QuantumGate('z')
-
 # 测量函数
-
-
 def mz(qubit: Qubit) -> Measurement:
+    """测量函数，创建一个测量操作"""
     return Measurement(qubit)
 
+# 创建控制函数
+def control(kernel, control_qubits, target_qubit):
+    """创建受控量子操作"""
+    pass
 
-# 创建小写别名，匹配导入语句
-qubit = Qubit
+
+# 类别名 - 小写形式，方便导入和使用
+qubit = Qubit     # Qubit类的小写别名
+qvector = QVector # QVector类的小写别名
+
+# 量子门对象 - 预定义的常用量子门
+h = QuantumGate(QuantumFunction.H.value)   # Hadamard门
+x = QuantumGate(QuantumFunction.X.value)   # Pauli-X门
+y = QuantumGate(QuantumFunction.Y.value)   # Pauli-Y门
+z = QuantumGate(QuantumFunction.Z.value)   # Pauli-Z门
+t = QuantumGate(QuantumFunction.T.value)   # T门
+s = QuantumGate(QuantumFunction.S.value)   # S门
+rx = QuantumGate(QuantumFunction.RX.value) # 绕X轴旋转门
+ry = QuantumGate(QuantumFunction.RY.value) # 绕Y轴旋转门
+rz = QuantumGate(QuantumFunction.RZ.value) # 绕Z轴旋转门
 
 
 class SSAAssembler:
-    """生成SSA低级汇编的类"""
+    """SSA汇编生成器类，用于生成SSA低级汇编代码"""
 
     def __init__(self):
         self.assembly = []
@@ -2109,7 +2356,7 @@ class SSAAssembler:
             self.qubit_map[qubit] = f"q{qubit.index}"
         return self.qubit_map[qubit]
 
-    def generate(self, program):
+    def generate(self, program, *args, **kwargs):
         """生成完整的SSA汇编"""
         # 重置状态，确保每次生成都是全新的
         self.assembly = []
@@ -2152,6 +2399,9 @@ class SSAAssembler:
             elif isinstance(op, VarQubitOperation):
                 # 收集动态量子比特操作的寄存器
                 self.classical_regs.add(f"c{op.index_reg}")
+            elif isinstance(op, dict) and op.get('type') == 'constant_assign':
+                # 收集常量赋值操作的寄存器
+                self.classical_regs.add(f"c{op['reg']}")
 
         # 为所有量子比特声明测量寄存器，确保测量寄存器数量正确
         for i in range(len(program.circuit.qubits)):
@@ -2202,6 +2452,21 @@ class SSAAssembler:
                 self._generate_xor_operation(op)
             elif isinstance(op, Condition):
                 self._generate_condition(op)
+            elif isinstance(op, VarQubitOperation):
+                self._generate_var_qubit(op)
+            elif isinstance(op, dict) and op.get('type') == 'constant_assign':
+                # 生成常量赋值指令：根据数值类型生成不同指令
+                reg = f"c{op['reg']}"
+                value = op['value']
+                self.classical_regs.add(reg)
+                
+                # 根据数值类型生成不同的赋值指令
+                if isinstance(value, int):
+                    self.add_line(f"mov.int32 {reg}, {value}")
+                elif isinstance(value, float):
+                    self.add_line(f"mov.float32 {reg}, {value}")
+                else:
+                    self.add_line(f"mov {reg}, {value}")
             elif isinstance(op, dict) and op.get('type') == 'dynamic_qubit_op':
                 # 生成使用动态量子比特的量子门操作
                 # 简化格式：qgate.<gate_name> dynamic=<index_reg>
@@ -2220,12 +2485,15 @@ class SSAAssembler:
         qubits = [self.get_qubit_reg(q) for q in op.qubits]
         qubits_str = ", ".join(qubits)
 
+        # 检查是否有角度参数（旋转门）
+        angle_str = f", angle={op.angle}" if op.angle is not None else ""
+
         if op.controls:
             controls = [self.get_qubit_reg(q) for q in op.controls]
             controls_str = ", ".join(controls)
-            line = f"qgate.{op.gate_name} {qubits_str}, ctrl={controls_str}"
+            line = f"qgate.{op.gate_name} {qubits_str}{angle_str}, ctrl={controls_str}"
         else:
-            line = f"qgate.{op.gate_name} {qubits_str}"
+            line = f"qgate.{op.gate_name} {qubits_str}{angle_str}"
 
         if op.adjoint:
             line += ".adj"
@@ -2258,7 +2526,7 @@ class SSAAssembler:
 
         if len(op.input_regs) == 0:
             # 空列表的all结果为True，所以输出1
-            self.add_line(f"const {output_reg}, 1")
+            self.add_line(f"const.int32 {output_reg}, 1")
             return
 
         if len(op.input_regs) == 1:
@@ -2326,81 +2594,6 @@ class SSAAssembler:
 
         # 生成XOR操作
         self.add_line(f"xor {output_reg}, {left_reg}, {right_reg}")
-
-    def _generate_condition(self, op):
-        """生成条件操作的汇编"""
-        # 生成条件标签
-        else_label = self.generate_label()
-        end_label = self.generate_label()
-
-        # 获取寄存器和比较值
-        reg = f"c{op.classical_reg}"
-        value = op.value
-
-        # 生成条件测试和跳转
-        if op.operator == ComparisonOperator.EQ:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumpne {else_label}")
-        elif op.operator == ComparisonOperator.NE:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumpe {else_label}")
-        elif op.operator == ComparisonOperator.LT:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumpge {else_label}")
-        elif op.operator == ComparisonOperator.LE:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumpg {else_label}")
-        elif op.operator == ComparisonOperator.GT:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumple {else_label}")
-        elif op.operator == ComparisonOperator.GE:
-            self.add_line(f"cmp {reg}, {value}")
-            self.add_line(f"jumpl {else_label}")
-
-        # 生成then分支操作
-        self.add_comment(f"Then branch ({len(op.then_operations)} operations)")
-        for then_op in op.then_operations:
-            if isinstance(then_op, QuantumOperation):
-                self._generate_quantum_operation(then_op)
-            elif isinstance(then_op, Measurement):
-                self._generate_measurement(then_op)
-            elif isinstance(then_op, MeasureToClassicalOperation):
-                self._generate_assign(then_op)
-            elif isinstance(then_op, AllOperation):
-                self._generate_all_operation(then_op)
-            elif isinstance(then_op, AndOperation):
-                self._generate_and_operation(then_op)
-            elif isinstance(then_op, OrOperation):
-                self._generate_or_operation(then_op)
-            elif isinstance(then_op, XorOperation):
-                self._generate_xor_operation(then_op)
-
-        # 跳转到结束标签
-        self.add_line(f"jump {end_label}")
-
-        # 生成else分支标签
-        self.add_line(f"{else_label}:")
-
-        # 生成else分支操作
-        self.add_comment(f"Else branch ({len(op.else_operations)} operations)")
-        for else_op in op.else_operations:
-            if isinstance(else_op, QuantumOperation):
-                self._generate_quantum_operation(else_op)
-            elif isinstance(else_op, Measurement):
-                self._generate_measurement(else_op)
-            elif isinstance(else_op, MeasureToClassicalOperation):
-                self._generate_assign(else_op)
-            elif isinstance(else_op, AllOperation):
-                self._generate_all_operation(else_op)
-            elif isinstance(else_op, AndOperation):
-                self._generate_and_operation(else_op)
-            elif isinstance(else_op, OrOperation):
-                self._generate_or_operation(else_op)
-            elif isinstance(else_op, XorOperation):
-                self._generate_xor_operation(else_op)
-
-        # 生成结束标签
-        self.add_line(f"{end_label}:")
 
     def _collect_registers_from_condition(self, op):
         """递归收集条件分支中的寄存器信息"""
@@ -2470,8 +2663,22 @@ class SSAAssembler:
 
         classical_reg = f"c{op.classical_reg}"
         self.classical_regs.add(classical_reg)
-        self.add_line(
-            f"br.cond {classical_reg}, {op.operator.value}, {op.value}, {then_label}, {else_label}")
+        
+        # 根据数值类型生成不同的条件分支指令
+        value = op.value
+        # 将布尔值统一转换为整数
+        if isinstance(value, bool):
+            value = 1 if value else 0
+        
+        if isinstance(value, int):
+            self.add_line(
+                f"br.cond.int32 {classical_reg}, {op.operator.value}, {value}, {then_label}, {else_label}")
+        elif isinstance(value, float):
+            self.add_line(
+                f"br.cond.float32 {classical_reg}, {op.operator.value}, {value}, {then_label}, {else_label}")
+        else:
+            self.add_line(
+                f"br.cond {classical_reg}, {op.operator.value}, {value}, {then_label}, {else_label}")
 
         self.add_line(f"{then_label}:")
         self._generate_operations(op.then_operations)
@@ -2503,11 +2710,18 @@ class SSAAssembler:
             elif isinstance(op, VarQubitOperation):
                 self._generate_var_qubit(op)
             elif isinstance(op, dict) and op.get('type') == 'constant_assign':
-                # 生成常量赋值指令：mov <reg>, <value>
+                # 生成常量赋值指令：根据数值类型生成不同指令
                 reg = f"c{op['reg']}"
                 value = op['value']
                 self.classical_regs.add(reg)
-                self.add_line(f"mov {reg}, {value}")
+                
+                # 根据数值类型生成不同的赋值指令
+                if isinstance(value, int):
+                    self.add_line(f"mov.int32 {reg}, {value}")
+                elif isinstance(value, float):
+                    self.add_line(f"mov.float32 {reg}, {value}")
+                else:
+                    self.add_line(f"mov {reg}, {value}")
             elif isinstance(op, dict) and op.get('type') == 'dynamic_qubit_op':
                 # 生成使用动态量子比特的量子门操作
                 gate_name = op['gate_name']
@@ -2523,254 +2737,3 @@ class SSAAssembler:
         self.classical_regs.add(index_reg)
         self.add_line(
             f"qreg.dynamic {op.var_name}, {index_reg}, {op.qvector_size}")
-
-
-qvector = QVector
-
-
-class SSASimulator:
-    """SSA模拟器执行后端框架，实现if和assign操作，为量子门和测量操作预留接口"""
-
-    def __init__(self):
-        self.quantum_registers = {}      # 量子寄存器: {name: qubit_object}
-        self.classical_registers = {}    # 经典寄存器: {name: value}
-        self.measurement_registers = {}  # 测量寄存器: {name: value}
-
-        self.instructions = []           # 解析后的指令列表
-        self.labels = {}                 # 标签到指令索引的映射
-        self.pc = 0                      # 程序计数器
-        self.running = False             # 运行状态
-
-        self.instruction_handlers = {
-            'declare': self._handle_declare,
-            'assign': self._handle_assign,
-            'br.cond': self._handle_br_cond,
-            'br': self._handle_br,
-            'qgate': self._handle_qgate,
-            'measure': self._handle_measure,
-            'and': self._handle_and,
-            'or': self._handle_or
-        }
-
-    def load_assembly(self, assembly_code: str) -> None:
-        """加载并解析SSA汇编代码"""
-        self.__init__()
-
-        lines = assembly_code.strip().split('\n')
-
-        for line in lines:
-            line = line.strip()
-
-            if not line or line.startswith(';;'):
-                continue
-
-            if line.endswith(':'):
-                label = line[:-1].strip()
-                self.labels[label] = len(self.instructions)
-                continue
-
-            line = line.replace(',', ' ')
-            parts = line.split()
-            if not parts:
-                continue
-
-            opcode = parts[0]
-            args = parts[1:] if len(parts) > 1 else []
-
-            self.instructions.append((opcode, args))
-
-    def run(self) -> None:
-        """执行加载的SSA汇编代码"""
-        self.running = True
-        self.pc = 0
-
-        while self.running and self.pc < len(self.instructions):
-            opcode, args = self.instructions[self.pc]
-
-            if opcode in self.instruction_handlers:
-                self.instruction_handlers[opcode](args)
-            else:
-                self.pc += 1
-
-        self.running = False
-
-    def stop(self) -> None:
-        """停止执行"""
-        self.running = False
-
-    def _handle_declare(self, args: List[str]) -> None:
-        """处理寄存器声明指令"""
-        if len(args) < 2:
-            self.pc += 1
-            return
-
-        reg_type = args[0]
-        reg_name = args[1]
-
-        if reg_type == 'qreg':
-            if reg_name not in self.quantum_registers:
-                self.quantum_registers[reg_name] = None  # 量子寄存器值由用户实现
-        elif reg_type == 'creg':
-            if reg_name not in self.classical_registers:
-                self.classical_registers[reg_name] = 0  # 经典寄存器初始化为0
-        elif reg_type == 'mreg':
-            if reg_name not in self.measurement_registers:
-                self.measurement_registers[reg_name] = 0  # 测量寄存器初始化为0
-
-        self.pc += 1
-
-    def _handle_assign(self, args: List[str]) -> None:
-        """处理赋值操作：assign mreg, creg"""
-        if len(args) < 2:
-            self.pc += 1
-            return
-
-        src_reg = args[0]
-        dst_reg = args[1]
-
-        if src_reg in self.measurement_registers and dst_reg in self.classical_registers:
-            self.classical_registers[dst_reg] = self.measurement_registers[src_reg]
-
-        self.pc += 1
-
-    def _handle_br_cond(self, args: List[str]) -> None:
-        """处理条件分支：br.cond creg, op, value, label_then, label_else"""
-        if len(args) < 5:
-            self.pc += 1
-            return
-
-        creg = args[0]
-        op = args[1]
-        value_str = args[2]
-        # 根据字符串值自动转换类型
-        if value_str.lower() == 'true':
-            value = True
-        elif value_str.lower() == 'false':
-            value = False
-        else:
-            try:
-                value = int(value_str)
-            except ValueError:
-                # 如果转换失败，保留为字符串
-                value = value_str
-        label_then = args[3]
-        label_else = args[4]
-
-        reg_value = self.classical_registers.get(creg, 0)
-
-        condition_met = False
-        if op == '==':
-            condition_met = (reg_value == value)
-        elif op == '!=':
-            condition_met = (reg_value != value)
-        elif op == '<':
-            condition_met = (reg_value < value)
-        elif op == '<=':
-            condition_met = (reg_value <= value)
-        elif op == '>':
-            condition_met = (reg_value > value)
-        elif op == '>=':
-            condition_met = (reg_value >= value)
-
-        if condition_met:
-            if label_then in self.labels:
-                self.pc = self.labels[label_then]
-            else:
-                self.pc += 1
-        else:
-            if label_else in self.labels:
-                self.pc = self.labels[label_else]
-            else:
-                self.pc += 1
-
-    def _handle_br(self, args: List[str]) -> None:
-        """处理无条件跳转：br label"""
-        if len(args) < 1:
-            self.pc += 1
-            return
-
-        label = args[0]
-        if label in self.labels:
-            self.pc = self.labels[label]
-        else:
-            self.pc += 1
-
-    def _handle_and(self, args: List[str]) -> None:
-        """处理AND操作：and output_reg, left_reg, right_reg"""
-        if len(args) < 3:
-            self.pc += 1
-            return
-
-        output_reg = args[0]
-        left_reg = args[1]
-        right_reg = args[2]
-
-        if left_reg in self.classical_registers and right_reg in self.classical_registers:
-            left_val = self.classical_registers[left_reg]
-            right_val = self.classical_registers[right_reg]
-            self.classical_registers[output_reg] = left_val & right_val
-
-        self.pc += 1
-
-    def _handle_or(self, args: List[str]) -> None:
-        """处理OR操作：or output_reg, left_reg, right_reg"""
-        if len(args) < 3:
-            self.pc += 1
-            return
-
-        output_reg = args[0]
-        left_reg = args[1]
-        right_reg = args[2]
-
-        if left_reg in self.classical_registers and right_reg in self.classical_registers:
-            left_val = self.classical_registers[left_reg]
-            right_val = self.classical_registers[right_reg]
-            self.classical_registers[output_reg] = left_val | right_val
-
-        self.pc += 1
-
-    def _handle_qgate(self, args: List[str]) -> None:
-        """处理量子门操作，由用户实现"""
-        print(f"[SSASimulator] 量子门操作（待实现）: qgate {' '.join(args)}")
-        self.pc += 1
-
-    def _handle_measure(self, args: List[str]) -> None:
-        """处理测量操作，由用户实现"""
-        print(f"[SSASimulator] 测量操作（待实现）: measure {' '.join(args)}")
-        self.pc += 1
-
-    # -------------------------------
-    # 辅助方法
-    # -------------------------------
-
-    def get_classical_reg_value(self, reg_name: str) -> int:
-        """获取经典寄存器的值"""
-        return self.classical_registers.get(reg_name, 0)
-
-    def set_classical_reg_value(self, reg_name: str, value: int) -> None:
-        """设置经典寄存器的值"""
-        self.classical_registers[reg_name] = value
-
-    def get_measurement_reg_value(self, reg_name: str) -> int:
-        """获取测量寄存器的值"""
-        return self.measurement_registers.get(reg_name, 0)
-
-    def set_measurement_reg_value(self, reg_name: str, value: int) -> None:
-        """设置测量寄存器的值"""
-        self.measurement_registers[reg_name] = value
-
-    def print_registers(self) -> None:
-        """打印所有寄存器的值"""
-        print("\n=== 寄存器状态 ===")
-        print("经典寄存器:")
-        for reg, value in self.classical_registers.items():
-            print(f"  {reg}: {value}")
-
-        print("测量寄存器:")
-        for reg, value in self.measurement_registers.items():
-            print(f"  {reg}: {value}")
-
-        print("量子寄存器:")
-        for reg in self.quantum_registers:
-            print(f"  {reg}: {self.quantum_registers[reg]}")
-        print("==================")

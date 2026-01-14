@@ -1,0 +1,32 @@
+# Python bytecode files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SSA assembly output files
+*.asm
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Testing files
+.pytest_cache/
+coverage.xml
+
+# Build files
+build/
+dist/
+*.egg-info/

@@ -4,18 +4,24 @@ import os
 # Add the root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from quantum_framework import quantum_kernel, qubit, qvector, h, x, z, mz, sample, set_target, SSASimulator
+from quantum_framework import quantum_kernel, qvector, h, x, mz, sample
 
 @quantum_kernel
-def prog():
-    qubit_count = 2
-    qubits = qvector(qubit_count)
-    h(qubits[0])
-    for i in range(1, qubit_count):
-        x.ctrl(qubits[0], qubits[i])
-    mz(qubits)
+def bell():
+    q = qvector(2)
+    h(q[0])
+    x.ctrl(q[0], q[1])
+    mz(q)
 
 # 生成并打印SSA汇编
 print("\n=== SSA Assembly ===")
-ssa_assembly = prog.generate_ssa_assembly()
+ssa_assembly = bell.generate_ssa_assembly()
 print(ssa_assembly)
+
+# 将SSA汇编保存到文件
+with open(os.path.join(os.path.dirname(__file__), 'example_001.asm'), 'w') as f:
+    f.write(ssa_assembly)
+print("\n=== SSA Assembly Saved to example_001.asm ===")
+
+result = sample(bell, shots_count=1000)
+print(result)
