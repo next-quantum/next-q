@@ -79,6 +79,16 @@ make clean  # 清理编译产物
 - 生成 SSA 汇编
 - 使用 sample 函数进行多次采样
 
+### example_003.py
+
+一个量子相位估计（QPE）算法示例，演示了如何：
+- 定义多个量子内核函数（iqft, t_gate, x_gate, qpe）
+- 实现逆量子傅里叶变换（iqft）
+- 使用控制门实现量子相位估计
+- 演示量子算法的组合使用
+- 生成并保存 SSA 汇编到文件
+- 使用 sample 函数进行多次采样
+
 ## 快速开始
 
 ### 安装
@@ -144,12 +154,13 @@ python my_quantum_script.py
 
 ## 支持的量子操作
 
-- **基本量子门**：h, x, z
-- **受控门**：x.ctrl, h.ctrl, z.ctrl
+- **基本量子门**：h, x, y, z, t, s, r1, rx, ry, rz
+- **受控门**：x.ctrl, h.ctrl, z.ctrl, r1.ctrl, rx.ctrl, ry.ctrl, rz.ctrl
 - **测量操作**：mz
 - **量子比特创建**：qubit, qvector
 - **条件执行**：支持基于测量结果的条件操作
 - **循环结构**：支持 for 循环遍历量子比特
+- **量子门组合**：支持量子内核的嵌套调用和组合使用
 
 ## 许可证
 
