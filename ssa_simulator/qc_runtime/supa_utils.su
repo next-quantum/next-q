@@ -1,0 +1,267 @@
+#include <cassert>
+#include <cmath>
+
+#include <iostream>
+#include <string>
+
+#include "supa_utils.hpp"
+
+suDeviceProp getSupaDeviceProperties(int deviceID) {
+  // [UPDATE 2024.1.4 10:49] add separator to make the appearance well looking
+  // printf("============================= Biren Device Information =================================\n");
+
+  // int driverVersion = 0, runtimeVersion = 0;
+
+  suDeviceProp deviceProp;
+  suGetDeviceProperties(&deviceProp, deviceID);
+
+  // printf("Device %d: \"%s\"\n", deviceID, deviceProp.name);
+
+  // suDriverGetVersion(&driverVersion);
+  // suRuntimeGetVersion(&runtimeVersion);
+
+  // printf(
+  //   "SUPA Driver Version /Runtime Version %d.%d /%d.%d\n",
+  //   driverVersion / 1000, (runtimeVersion % 100) / 10,
+  //   runtimeVersion / 1000, (runtimeVersion % 100) / 10
+  // );
+
+  // printf("SUPA Capability Major/Minor version number: %d.%d\n", deviceProp.major, deviceProp.minor);
+
+  // printf(
+  //   "Total amount of global memory: %.2f GBytes (%llu bytes)\n", 
+  //   (float)deviceProp.totalGlobalMem / (pow(1024.0, 3)), 
+  //   (unsigned long long)deviceProp.totalGlobalMem
+  // );
+
+  // printf("GPU Clock rate: %.0f MHz (%0.2f GHz)\n", deviceProp.clockRate*1e-3f, deviceProp.clockRate*1e-6f);
+  // printf("Memory Clock rate: %.0f Mhz\n", deviceProp.memoryClockRate*1e-3f);
+  // printf("Memory Bus Width: %d-bit\n", deviceProp.memoryBusWidth);
+
+  // if (deviceProp.l2CacheSize) {
+  //   printf("L2 Cache Size: %d bytes\n", deviceProp.l2CacheSize);
+  // }
+
+  // printf("Total amount of constant memory: %lu bytes\n", deviceProp.totalConstMem);
+  // printf("Total amount of shared memory per block: %lu bytes\n", deviceProp.sharedMemPerBlock);
+  // printf("Total amount of shared memory per multi processor: %lu bytes\n", deviceProp.sharedMemPerMultiprocessor);
+  // printf("Total number of registers available per block: %d\n", deviceProp.regsPerBlock);
+  // printf("Warp size: %d\n", deviceProp.warpSize);
+  // printf("Maximum number of threads per multiprocessor: %d\n", deviceProp.maxThreadsPerMultiProcessor);
+  // printf("Maximum number of threads per block: %d\n", deviceProp.maxThreadsPerBlock);
+  // printf("Maximum sizes of each dimension of a block: %d x %d x%d\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1], deviceProp.maxThreadsDim[2]);
+  // printf("Maximum sizes of each dimension of a block: %d x %d x%d\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
+  // printf("Maximum memory pitch: %lu bytes\n", deviceProp.memPitch);
+  
+  // printf("Number of SPC: %lu\n", deviceProp.spcCount);
+  // printf("Size of HBM section: %lu\n", deviceProp.hbmSectionSize);
+  // printf("Numa region alignment: %lu\n", deviceProp.numaRegionAlign);
+  // printf("SPC UVA mode: %d\n", deviceProp.spcUvaMode);
+
+  // printf("============================= Biren Device Information =================================\n");
+
+  return deviceProp;
+}
+
+bool setKernelFunctionAttributes(
+  suFuncAttributes& attrs, 
+  const std::string& name, 
+  const void* func
+  // int const minThreadsPerBlock
+) {
+  suError_t supaStatus = suFuncGetAttributes(&attrs, func);
+  if (supaStatus != suSuccess) {
+    std::cerr
+      << "[suFuncGetAttributes] failed for function: " << name
+      << ", with error: " << suGetErrorString(supaStatus) << std::endl;
+    return false;
+  }
+
+  // std::cout
+  //   << "[" << name << "]: max threads per block " << attrs.maxThreadsPerBlock
+  //   << ", local memory used " << attrs.localSizeBytes
+  //   << ", registers used " << attrs.numRegs 
+  //   << ", static shared memory used " << attrs.sharedSizeBytes
+  //   << std::endl;
+
+  // [BUG 2022.3.9 19:53] should be < instead of <=
+  // if (attrs.maxThreadsPerBlock < minThreadsPerBlock) {
+  //   std::cerr << "minimum threads per bslock allowed is: " << minThreadsPerBlock << std::endl;
+  //   return false;
+  // }
+
+  return true;
+}
+
+bool allocateDeviceMemory(void** mem, uint64_t size, const std::string& name) {
+  auto supaStatus = suMallocDevice(mem, size);
+  if (supaStatus != suSuccess) {
+    std::cerr << "[" << name << "] supa malloc failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+    goto error_entry_point;
+  }
+
+  // memset
+  supaStatus = suMemset(*mem, 0, size);
+  if (supaStatus != suSuccess) {
+    std::cerr << "[" << name << "] supa memset failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+    goto error_entry_point;
+  }
+
+  return true;
+
+error_entry_point:
+  *mem = nullptr;
+  return false;
+}
+
+bool allocateDeviceNumaMemory(void** mem, uint64_t* sizePerRegionPitch, uint64_t numRegions, uint64_t sizePerRegion, const std::string& name) {
+  auto supaStatus = suNumaMallocDevice(mem, sizePerRegionPitch, numRegions, sizePerRegion);
+  if (supaStatus != suSuccess) {
+    std::cerr << "[" << name << "] supa malloc numa failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+    goto error_entry_point;
+  }
+
+  std::cout << "[" << name << "] region pitch/size is " << *sizePerRegionPitch << "/" << sizePerRegion << std::endl;
+
+  // memset
+  // supaStatus = suMemset(*mem, 0, size);
+  // if (supaStatus != suSuccess) {
+  //   std::cerr << "[" << name << "] supa memset failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+  //   goto error_entry_point;
+  // }
+
+  return true;
+
+error_entry_point:
+  *mem = nullptr;
+  return false;
+}
+
+// bool allocateManagedMemory(void** mem, uint64_t size, const std::string& name) {
+//   auto supaStatus = supaMallocManaged(mem, size);
+//   if (supaStatus != suSuccess) {
+//     std::cerr << "[" << name << "] supa malloc managed failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+//     goto error_entry_point;
+//   }
+
+//   // [UPDATE 2022.8.6 16:47] after setting this, the GPU performance drop a lot, (574751.8781 => 376037.5985)
+//   //  but CPU fraction reduces from 7% to 2%, this should be what happens with AMD Rocm
+//   //  if device management is turn on, performance may increases by 60%.
+
+//   // supaStatus = supaMemAdvise(*mem, size, supaMemAdviseSetPreferredLocation, supaCpuDeviceId);
+//   // if (supaStatus != suSuccess) {
+//   //   std::cerr << "[" << name << "] supa mem advise failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+//   //   goto error_entry_point;
+//   // }
+
+//   // memset
+//   supaStatus = suMemset(*mem, 0, size);
+//   if (supaStatus != suSuccess) {
+//     std::cerr << "[" << name << "] supa memset failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+//     goto error_entry_point;
+//   }
+
+//   return true;
+
+// error_entry_point:
+//   *mem = nullptr;
+//   return false;
+// }
+
+bool resetDeviceMemory(void** mem, uint64_t size, const std::string& name) {
+  // memset
+  auto supaStatus = suMemset(*mem, 0, size);
+  if (supaStatus != suSuccess) {
+    std::cerr << "[" << name << "] supa memset failed with error " << suGetErrorString(supaStatus) << std::endl;
+
+    goto error_entry_point;
+  }
+
+  return true;
+
+error_entry_point:
+  *mem = nullptr;
+  return false;
+}
+
+void releaseDeviceMemory(void** mem, const std::string& name, bool noError) {
+  if (*mem == nullptr) {
+    return;
+  }
+
+  auto supaStatus = suFree(*mem);
+  if (supaStatus != suSuccess && !noError) {
+    std::cerr
+      << "[" << name << "] supa free failed at address: 0x" << *mem
+      << ", with error: " << suGetErrorString(supaStatus) << std::endl;
+  }
+  *mem = nullptr;
+}
+
+bool copyHostMemoryToDevice(void* dst, const void* src, uint64_t size, const std::string& name) {
+  auto supaStatus = suMemcpy(dst, src, size, suMemcpyHostToDevice);
+  if (supaStatus != suSuccess) {
+    std::cerr
+      << "[" << name << "] supa mem copy from host at address: 0x" << src
+      << " to device at address: 0x" << dst
+      << " of size: " << size
+      << " failed, with error: " << suGetErrorString(supaStatus) << std::endl;
+    return false;
+  }
+
+  supaStatus = suDeviceSynchronize();
+  if (supaStatus != suSuccess) {
+    std::cerr 
+      << "[suDeviceSynchronize] device sync with error " 
+      << suGetErrorString(supaStatus) 
+      << std::endl;
+
+    return false;
+  }
+
+  // std::cout << "[" << name << "] " << size << " byte data copied from host to device\n";
+  return true;
+}
+
+bool copyDeviceMemoryToHost(void* dst, const void* src, uint64_t size, const std::string& name) {
+  auto supaStatus = suMemcpy(dst, src, size, suMemcpyDeviceToHost);
+  if (supaStatus != suSuccess) {
+    std::cerr
+      << "[" << name << "] supa mem copy from device at address: 0x" << src
+      << " to host at address: 0x" << dst
+      << " of size: " << size
+      << " failed, with error: " << suGetErrorString(supaStatus) << std::endl;
+    return false;
+  }
+
+  supaStatus = suDeviceSynchronize();
+  if (supaStatus != suSuccess) {
+    std::cerr 
+      << "[suDeviceSynchronize] device sync with error " 
+      << suGetErrorString(supaStatus) 
+      << std::endl;
+
+    return false;
+  }
+
+  return true;
+}
+
+uint64_t calculateBlocksPerGrid(
+  uint64_t const threadsPerGrid, 
+  uint64_t const threadsPerBlock
+) {
+  assert(threadsPerGrid >= threadsPerBlock);
+  assert(threadsPerBlock > 0);
+
+  uint64_t blocksPerGrid = (threadsPerGrid + threadsPerBlock - 1) / threadsPerBlock;
+
+  return blocksPerGrid;
+}

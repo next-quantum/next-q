@@ -1,3 +1,5 @@
+#pragma once
+
 // Copyright 2017 ProjectQ-Framework (www.projectq.ch)
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,14 +20,8 @@
 #include <complex>
 #include <functional>
 #include <algorithm>
-#include "../intrin/alignedallocator.hpp"
-
-template <class T>
-inline T add(T a, T b){ return a+b; }
-
-template <class T>
-inline T mul(T a, T b){ return a*b; }
-
+#include "cintrin.hpp"
+#include "alignedallocator.hpp"
 
 #define LOOP_COLLAPSE1 2
 #define LOOP_COLLAPSE2 3

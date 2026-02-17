@@ -31,8 +31,18 @@ endif
 # 编译器设置
 CXX ?= g++
 
+# 壁仞GPU支持
+ifdef enable-biren
+    BIREN_SUPPORT := 1
+else
+    BIREN_SUPPORT := 0
+endif
+
 # 基础编译选项
 CXXFLAGS = -std=c++17 -O3 -Wall -fPIC
+ifeq ($(BIREN_SUPPORT), 1)
+    CXXFLAGS += -DENABLE_BIREN
+endif
 
 # 调试模式选项
 DEBUG_FLAGS = -DDEBUG_OUTPUT -DDEBUG
@@ -60,15 +70,6 @@ else ifeq ($(OS_TYPE),Linux)
     RM := rm -f
 endif
 
-# 链接选项
-ifeq ($(OS_TYPE),Windows)
-    LDFLAGS = -shared
-else ifeq ($(OS_TYPE),macOS)
-    LDFLAGS = -bundle -undefined dynamic_lookup $(if $(filter ARM,$(ARCH_TYPE)),-arch arm64,-arch x86_64)
-else ifeq ($(OS_TYPE),Linux)
-    LDFLAGS = -shared
-endif
-
 # Python设置
 PYTHON ?= python3
 PYTHON_INCLUDE = $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")
@@ -77,9 +78,24 @@ PYTHON_LD = $(shell $(PYTHON) -c "import sysconfig; print(' '.join(sysconfig.get
 PYTHON_LDFLAGS = $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('LDFLAGS') or '')")
 PYBIND11_INCLUDE = $(shell $(PYTHON) -c "import pybind11; print(pybind11.get_include())")
 
-# 完整版本：包含所有必要的源文件，使用真正的qc_runtime
-SRCS = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime_cpu/qc_runtime.cpp
-OBJS = $(SRCS:.cpp=.o)
+# 壁仞GPU编译设置
+BIREN_CC ?= brcc
+BIREN_FLAGS = -std=c++17 -O3 -fPIC -x supa
+BIREN_LINK_FLAGS = --supa-link -O2
+
+# 完整版本：包含所有必要的源文件，使用真正的qc_runtime_v2
+CPP_SRCS = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
+
+# 壁仞GPU源文件
+ifeq ($(BIREN_SUPPORT), 1)
+    SU_SRCS = qc_runtime/qc_simulator_biren_gpu_sv_v2.su qc_runtime/supa_utils.su qc_runtime/qc_kernels_supa.su
+else
+    SU_SRCS =
+endif
+
+CPP_OBJS = $(CPP_SRCS:.cpp=.o)
+SU_OBJS = $(SU_SRCS:.su=.o)
+OBJS = $(CPP_OBJS) $(SU_OBJS)
 
 # 确定Python扩展模块后缀
 PY_SUFFIX := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX') or '.so')")
@@ -89,7 +105,13 @@ TARGET = ssa_simulator_cpp$(PY_SUFFIX)
 INCLUDES = -I$(PYTHON_INCLUDE) -I$(PYBIND11_INCLUDE) -I.
 
 # 链接库路径
-LIBS = $(if $(PYTHON_LIB),-L$(PYTHON_LIB),) $(PYTHON_LD) $(PYTHON_LDFLAGS)
+ifeq ($(OS_TYPE),macOS)
+    # macOS 特殊处理：使用 -undefined dynamic_lookup 而不是显式链接 Python 库
+    LIBS =
+else
+    # Linux/Windows 使用常规链接方式
+    LIBS = $(if $(PYTHON_LIB),-L$(PYTHON_LIB),) $(PYTHON_LD) $(PYTHON_LDFLAGS)
+endif
 
 # 默认目标
 all: $(TARGET) ssa_simulation_runner$(EXE_EXT)
@@ -98,29 +120,60 @@ all: $(TARGET) ssa_simulation_runner$(EXE_EXT)
 debug: CXXFLAGS += $(DEBUG_FLAGS)
 debug: all
 
-# 编译规则
+# 编译规则 - C++文件（用默认编译器）
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-qc_runtime_cpu/%.o: qc_runtime_cpu/%.cpp
+qc_runtime/%.o: qc_runtime/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# 链接规则
+# SU文件编译规则（壁仞GPU）- 仅当启用壁仞支持时，用 brcc 编译
+ifeq ($(BIREN_SUPPORT), 1)
+qc_runtime/%.o: qc_runtime/%.su
+	$(BIREN_CC) $(BIREN_FLAGS) $(INCLUDES) -c $< -o $@
+endif
+
+# 链接规则 - 根据是否启用壁仞支持选择链接器
+ifeq ($(BIREN_SUPPORT), 1)
+# 使用 brcc 和 --supa-link 进行链接（官方推荐方式）
 $(TARGET): $(OBJS)
-	$(CXX) $(LDFLAGS) $(OBJS) $(LIBS) -o $(TARGET)
+ifeq ($(OS_TYPE),macOS)
+	$(BIREN_CC) $(BIREN_LINK_FLAGS) -shared $(OBJS) $(LIBS) -undefined dynamic_lookup -o $(TARGET)
+else
+	$(BIREN_CC) $(BIREN_LINK_FLAGS) -shared $(OBJS) $(LIBS) -o $(TARGET)
+endif
+else
+# 使用默认编译器进行链接
+$(TARGET): $(OBJS)
+ifeq ($(OS_TYPE),macOS)
+	$(CXX) -shared $(OBJS) $(LIBS) -undefined dynamic_lookup -o $(TARGET)
+else
+	$(CXX) -shared $(OBJS) $(LIBS) -o $(TARGET)
+endif
+endif
 
 # 二进制目标
-BIN_OBJS = ssa_parser.o ssa_executor.o qc_runtime_cpu/qc_runtime.o
+BIN_CPP_OBJS = ssa_parser.o ssa_executor.o qc_runtime/qc_runtime_v2.o qc_runtime/qc_simulator_default_cpu_sv_v2.o qc_runtime/qc_simulator_v2.o
+ifeq ($(BIREN_SUPPORT), 1)
+    BIN_OBJS = $(BIN_CPP_OBJS) qc_runtime/qc_simulator_biren_gpu_sv_v2.o qc_runtime/supa_utils.o qc_runtime/qc_kernels_supa.o
+else
+    BIN_OBJS = $(BIN_CPP_OBJS)
+endif
 
 # ssa_simulation_runner 目标
+ifeq ($(BIREN_SUPPORT), 1)
+# 使用 brcc 和 --supa-link 进行链接
+ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpp $(BIN_OBJS)
+	$(BIREN_CC) $(BIREN_LINK_FLAGS) $(CXXFLAGS) $(INCLUDES) ssa_simulation_runner.cpp $(BIN_OBJS) $(LIBS) -o $@
+else
+# 使用默认编译器进行链接
 ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpp $(BIN_OBJS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) ssa_simulation_runner.cpp $(BIN_OBJS) -o $@
-
-
+endif
 
 # 清理规则
 clean:
-	$(RM) $(OBJS) $(TARGET) $(BIN_OBJS) ssa_simulation_runner$(EXE_EXT)
+	$(RM) $(CPP_OBJS) $(SU_OBJS) $(TARGET) $(BIN_OBJS) ssa_simulation_runner$(EXE_EXT)
 
 # 测试规则
 test:
@@ -133,10 +186,12 @@ show:
 	@echo "ARCH_TYPE: $(ARCH_TYPE)"
 	@echo "CXX: $(CXX)"
 	@echo "CXXFLAGS: $(CXXFLAGS)"
-	@echo "LDFLAGS: $(LDFLAGS)"
+	@echo "BIREN_SUPPORT: $(BIREN_SUPPORT)"
+	@echo "BIREN_CC: $(BIREN_CC)"
 	@echo "PYTHON: $(PYTHON)"
 	@echo "PYTHON_INCLUDE: $(PYTHON_INCLUDE)"
 	@echo "PYBIND11_INCLUDE: $(PYBIND11_INCLUDE)"
 	@echo "TARGET: $(TARGET)"
-	@echo "SRCS: $(SRCS)"
+	@echo "CPP_SRCS: $(CPP_SRCS)"
+	@echo "SU_SRCS: $(SU_SRCS)"
 	@echo "OBJS: $(OBJS)"

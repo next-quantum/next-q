@@ -1,15 +1,39 @@
-#include "ssa_executor.h"
-#include "qc_runtime_cpu/qc_runtime.h"
-#include <algorithm>
 #include <cctype>
 #include <cstdlib>
+
+#include <algorithm>
 #include <sstream>
 #include <iostream>
 
+// Compile-time constant to control which quantum runtime interface to use
+// Define as 1 to use qc_runtime_v2.h, 0 to use qc_runtime.h
+#define USE_QC_RUNTIME_V2 1
+
+#include "ssa_executor.h"
+
+#if USE_QC_RUNTIME_V2
+#include "qc_runtime/qc_runtime_v2.h"
+#else
+#include "qc_runtime/qc_runtime.h"
+#endif
+
 namespace ssa {
 
-SSAExecutor::SSAExecutor() {
+SSAExecutor::SSAExecutor(BackendType backend) {
     DEBUG_PRINT("[DEBUG] SSAExecutor::SSAExecutor() called");
+    
+    // 设置后端类型
+    switch (backend) {
+        case BackendType::CPU:
+            setBackend_v2(BackendCPU);
+            break;
+        case BackendType::BirenGPU:
+            setBackend_v2(BackendBirenGPU);
+            break;
+        default:
+            setBackend_v2(BackendCPU);
+            break;
+    }
     
     // 初始化随机数种子
     srand(static_cast<unsigned int>(time(nullptr)));
@@ -36,7 +60,8 @@ SSAExecutor::SSAExecutor() {
 
 SSAExecutor::~SSAExecutor() {
     DEBUG_PRINT("[DEBUG] SSAExecutor::~SSAExecutor() called");
-    // 释放资源
+    // [BUG 2026.2.7 9:30] 直接使用reset
+    reset();
     release_quantum_state();
     DEBUG_PRINT("[DEBUG] SSAExecutor::~SSAExecutor() completed");
 }
@@ -133,10 +158,6 @@ bool SSAExecutor::run() {
     
     // 假设量子状态已经在load_program()方法中成功初始化
     // 不进行任何量子状态的重新初始化，避免重复初始化错误
-    // if (!program_.qregs.empty()) {
-    //     error_ = "Quantum state not initialized, please call load_program() first";
-    //     return false;
-    // }
     
     // 执行指令直到完成或出错
     while (context_.status == ExecutionStatus::RUNNING) {
@@ -633,11 +654,6 @@ std::string SSAExecutor::get_reg_name(int reg_index, const std::string& reg_type
     return "c" + std::to_string(reg_index);
 }
 
-// 初始化静态成员变量
-// bool DefaultQuantumGateHandler::is_initialized_ = false;
-// bool DefaultQuantumGateHandler::qubits_allocated_ = false;
-// size_t DefaultQuantumGateHandler::last_allocated_qubits_ = 0;
-
 // 默认量子门处理器实现，使用qc_runtime进行实际量子计算
 DefaultQuantumGateHandler::DefaultQuantumGateHandler() {
     DEBUG_PRINT("DefaultQuantumGateHandler::DefaultQuantumGateHandler() called");
@@ -654,97 +670,75 @@ bool DefaultQuantumGateHandler::initialize_quantum_state(size_t num_qubits) {
     // if (!is_initialized_) {
     try {
         DEBUG_PRINT("  Initializing qc_runtime...");
+        #if USE_QC_RUNTIME_V2
+        DEBUG_PRINT("  [qc_runtime] Calling initWithQubitSize_v2()");
+        initWithQubitSize_v2(num_qubits);
+        #else
         DEBUG_PRINT("  [qc_runtime] Calling init()");
         init();
+        #endif
+
         unsigned int rand_seed = static_cast<unsigned int>(rand());
+
+        #if USE_QC_RUNTIME_V2
+        DEBUG_PRINT("  [qc_runtime] Calling seed_v2(" << rand_seed << ")");
+        seed_v2(rand_seed);
+        #else
         DEBUG_PRINT("  [qc_runtime] Calling seed(" << rand_seed << ")");
         seed(rand_seed);
-        // is_initialized_ = true;
+        #endif
         DEBUG_PRINT("  qc_runtime initialized successfully");
     } catch (...) {
         std::cerr << "Error: Failed to initialize qc_runtime" << std::endl;
         return false;
     }
-    // }
-    
-    // try {
-    //     // 只有当量子位已经分配时才尝试释放
-    //     if (qubits_allocated_) {
-    //         // 释放已分配的量子位（使用上次记录的数量）
-    //         for (size_t i = 0; i < last_allocated_qubits_; ++i) {
-    //             std::cout << "  [qc_runtime] Calling release(" << i << ")" << std::endl;
-    //             release(static_cast<unsigned int>(i));
-    //         }
-    //         // 重置分配标记
-    //         qubits_allocated_ = false;
-    //         last_allocated_qubits_ = 0;
-    //     }
-    // } catch (...) {
-    //     // 忽略释放错误，继续执行
-    //     std::cout << "  [qc_runtime] Warning: Failed to release qubits (might not be allocated yet)" << std::endl;
-    // }
     
     try {
         // 只有当量子位未分配时才尝试分配
-        // if (!qubits_allocated_) {
         // 分配量子位，这会将它们重置到|0⟩状态
 
+        #if USE_QC_RUNTIME_V2
+        // nothing
+        #else
         for (size_t i = 0; i < num_qubits; ++i) {
             DEBUG_PRINT("  [qc_runtime] Calling allocateQubit(" << i << ")");
             allocateQubit(static_cast<unsigned int>(i));
         }
+        #endif
         num_qubits_allocated_ = num_qubits;
-
-        // 标记量子位已分配并记录数量
-        // qubits_allocated_ = true;
-        // last_allocated_qubits_ = num_qubits;
-        // DEBUG_PRINT("  Allocated " << num_qubits << " qubits");
-        // }
     } catch (...) {
         std::cerr << "Error: Failed to allocate qubits" << std::endl;
-        // 确保分配失败时标记为未分配
-        // qubits_allocated_ = false;
-        // last_allocated_qubits_ = 0;
         return false;
     }
     
     // 设置一个非空指针，让SSAExecutor知道量子状态已经初始化
-    // static int dummy_quantum_state = 0;
-    // *quantum_state = &dummy_quantum_state;
     DEBUG_PRINT("DefaultQuantumGateHandler::initialize_quantum_state() returning true");
     return true;
 }
-    
+
 void DefaultQuantumGateHandler::release_quantum_state() {
     DEBUG_PRINT("DefaultQuantumGateHandler::release_quantum_state() called");
     
-    // 只有当量子位已分配时才释放
-    // if (qubits_allocated_) {
-    //     try {
-    //         // 释放已分配的量子位（使用精确记录的数量）
-    //         for (size_t i = 0; i < last_allocated_qubits_; ++i) {
-    //             DEBUG_PRINT("  [qc_runtime] Calling release(" << i << ")");
-    //             release(static_cast<unsigned int>(i));
-    //         }
-    //         // 重置状态
-    //         qubits_allocated_ = false;
-    //         last_allocated_qubits_ = 0;
-    //         DEBUG_PRINT("  [qc_runtime] Released all qubits");
-    //     } catch (...) {
-    //         // 忽略释放错误
-    //         DEBUG_PRINT("  [qc_runtime] Warning: Failed to release some qubits");
-    //         // 重置状态以避免后续问题
-    //         qubits_allocated_ = false;
-    //         last_allocated_qubits_ = 0;
-    //     }
-    // }
-
+    // 如果没有分配量子位，直接返回
+    if (num_qubits_allocated_ == 0) {
+        DEBUG_PRINT("  No qubits allocated, returning");
+        return;
+    }
+    
     // release all qubits
     try {
+        #if USE_QC_RUNTIME_V2
+        DEBUG_PRINT("  [qc_runtime] Calling release_v2()");
+        // [BUG 2026.2.7 9:33] 忘记释放
+        release_v2();
+        #else
         for (size_t i = 0; i < num_qubits_allocated_; ++i) {
             DEBUG_PRINT("  [qc_runtime] Calling release(" << i << ")");
             release(static_cast<unsigned int>(i));
         }
+        #endif
+        // 重置状态以避免后续问题
+        num_qubits_allocated_ = 0;
     } catch (...) {
         // 忽略释放错误
         DEBUG_PRINT("  [qc_runtime] Warning: Failed to release some qubits");
@@ -756,17 +750,15 @@ void DefaultQuantumGateHandler::release_quantum_state() {
 bool DefaultQuantumGateHandler::reset_quantum_state() {
     DEBUG_PRINT("DefaultQuantumGateHandler::reset_quantum_state() called");
     
-    // 确保qc_runtime已初始化
-    // if (!is_initialized_) {
-    //     std::cerr << "Error: qc_runtime not initialized before resetting quantum state" << std::endl;
-    //     context.error_msg = "qc_runtime not initialized";
-    //     return false;
-    // }
-    
     try {
         // 重置量子状态
-        DEBUG_PRINT("  [qc_runtime] Calling reset()");
+        #if USE_QC_RUNTIME_V2
+        DEBUG_PRINT("  [qc_runtime] Calling resetToZeroState_v2()");
+        resetToZeroState_v2();
+        #else
+        DEBUG_PRINT("  [qc_runtime] Calling resetToZeroState()");
         resetToZeroState();
+        #endif
         DEBUG_PRINT("  qc_runtime quantum state reset successfully");
         return true;
     } catch (...) {
@@ -774,16 +766,10 @@ bool DefaultQuantumGateHandler::reset_quantum_state() {
         return false;
     }
 }
-    
+
 bool DefaultQuantumGateHandler::execute_quantum_gate(
     const QGateInstruction& gate, ExecutionContext& context) {
-    // 确保qc_runtime已初始化
-    // if (!is_initialized_) {
-    //     std::cerr << "Error: qc_runtime not initialized before executing quantum gate" << std::endl;
-    //     context.error_msg = "qc_runtime not initialized";
-    //     return false;
-    // }
-    
+
     DEBUG_PRINT("DefaultQuantumGateHandler::execute_quantum_gate() called");
     
     // 确保有目标量子位
@@ -820,8 +806,13 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
         
         if (gate.control_qubits.empty()) {
             // 普通SWAP门
+            #if USE_QC_RUNTIME_V2
+            DEBUG_PRINT("  [qc_runtime] Calling SWAP_v2(" << qubit1 << ", " << qubit2 << ")");
+            SWAP_v2(qubit1, qubit2);
+            #else
             DEBUG_PRINT("  [qc_runtime] Calling SWAP(" << qubit1 << ", " << qubit2 << ")");
             SWAP(qubit1, qubit2);
+            #endif
         } else {
             // 受控SWAP门
             unsigned int num_controls = static_cast<unsigned int>(gate.control_qubits.size());
@@ -841,8 +832,13 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
             }
             controls_str << "]";
             
+            #if USE_QC_RUNTIME_V2
+            DEBUG_PRINT("  [qc_runtime] Calling MCSWAP_v2(" << num_controls << ", " << controls_str.str() << ", " << qubit1 << ", " << qubit2 << ")");
+            MCSWAP_v2(num_controls, controls, qubit1, qubit2);
+            #else
             DEBUG_PRINT("  [qc_runtime] Calling MCSWAP(" << num_controls << ", " << controls_str.str() << ", " << qubit1 << ", " << qubit2 << ")");
             MCSWAP(num_controls, controls, qubit1, qubit2);
+            #endif
             
             delete[] controls;
         }
@@ -856,64 +852,129 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
     
     if (gate.control_qubits.empty()) {
         // 单量子门
-            switch (gate.gate_type) {
-                case QuantumGateType::X:
-                    DEBUG_PRINT("  [qc_runtime] Calling X(" << target_qubit << ")");
-                    X(target_qubit);
-                    break;
-                case QuantumGateType::Y:
-                    DEBUG_PRINT("  [qc_runtime] Calling Y(" << target_qubit << ")");
-                    Y(target_qubit);
-                    break;
-                case QuantumGateType::Z:
-                    DEBUG_PRINT("  [qc_runtime] Calling Z(" << target_qubit << ")");
-                    Z(target_qubit);
-                    break;
-                case QuantumGateType::H:
-                    DEBUG_PRINT("  [qc_runtime] Calling H(" << target_qubit << ")");
-                    H(target_qubit);
-                    break;
-                case QuantumGateType::S:
-                    DEBUG_PRINT("  [qc_runtime] Calling S(" << target_qubit << ")");
-                    S(target_qubit);
-                    break;
-                case QuantumGateType::T:
-                    DEBUG_PRINT("  [qc_runtime] Calling T(" << target_qubit << ")");
-                    T(target_qubit);
-                    break;
-                case QuantumGateType::ADJS:
-                    DEBUG_PRINT("  [qc_runtime] Calling AdjS(" << target_qubit << ")");
-                    AdjS(target_qubit);
-                    break;
-                case QuantumGateType::ADJT:
-                    DEBUG_PRINT("  [qc_runtime] Calling AdjT(" << target_qubit << ")");
-                    AdjT(target_qubit);
-                    break;
-                case QuantumGateType::RX:
-                    DEBUG_PRINT("  [qc_runtime] Calling RX(" << target_qubit << ", " << gate.angle << ")");
-                    RX(target_qubit, gate.angle);
-                    break;
-                case QuantumGateType::RY:
-                    DEBUG_PRINT("  [qc_runtime] Calling RY(" << target_qubit << ", " << gate.angle << ")");
-                    RY(target_qubit, gate.angle);
-                    break;
-                case QuantumGateType::RZ:
-                    DEBUG_PRINT("  [qc_runtime] Calling RZ(" << target_qubit << ", " << gate.angle << ")");
-                    RZ(target_qubit, gate.angle);
-                    break;
-                case QuantumGateType::R1:
-                    DEBUG_PRINT("  [qc_runtime] Calling RZ(" << target_qubit << ", " << gate.angle << ")");
-                    R1(gate.angle, target_qubit);
-                    break;
-                case QuantumGateType::RESET:
-                    DEBUG_PRINT("  [qc_runtime] Calling reset(" << target_qubit << ")");
-                    reset(target_qubit);
-                    break;
-                default:
-                    std::cerr << "Error: Unknown single-qubit gate type" << std::endl;
-                    context.error_msg = "Unknown single-qubit gate type";
-                    return false;
-            }
+        switch (gate.gate_type) {
+            case QuantumGateType::X:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling X_v2(" << target_qubit << ")");
+                X_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling X(" << target_qubit << ")");
+                X(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::Y:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling Y_v2(" << target_qubit << ")");
+                Y_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling Y(" << target_qubit << ")");
+                Y(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::Z:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling Z_v2(" << target_qubit << ")");
+                Z_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling Z(" << target_qubit << ")");
+                Z(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::H:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling H_v2(" << target_qubit << ")");
+                H_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling H(" << target_qubit << ")");
+                H(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::S:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling S_v2(" << target_qubit << ")");
+                S_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling S(" << target_qubit << ")");
+                S(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::T:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling T_v2(" << target_qubit << ")");
+                T_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling T(" << target_qubit << ")");
+                T(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::ADJS:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling AdjS_v2(" << target_qubit << ")");
+                AdjS_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling AdjS(" << target_qubit << ")");
+                AdjS(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::ADJT:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling AdjT_v2(" << target_qubit << ")");
+                AdjT_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling AdjT(" << target_qubit << ")");
+                AdjT(target_qubit);
+                #endif
+                break;
+            case QuantumGateType::RX:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling RX_v2(" << target_qubit << ", " << gate.angle << ")");
+                RX_v2(gate.angle, target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling RX(" << target_qubit << ", " << gate.angle << ")");
+                RX(target_qubit, gate.angle);
+                #endif
+                break;
+            case QuantumGateType::RY:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling RY_v2(" << target_qubit << ", " << gate.angle << ")");
+                RY_v2(gate.angle, target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling RY(" << target_qubit << ", " << gate.angle << ")");
+                RY(target_qubit, gate.angle);
+                #endif
+                break;
+            case QuantumGateType::RZ:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling RZ_v2(" << target_qubit << ", " << gate.angle << ")");
+                RZ_v2(gate.angle, target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling RZ(" << target_qubit << ", " << gate.angle << ")");
+                RZ(target_qubit, gate.angle);
+                #endif
+                break;
+            case QuantumGateType::R1:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling R1_v2(" << target_qubit << ", " << gate.angle << ")");
+                R1_v2(gate.angle, target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling R1(" << target_qubit << ", " << gate.angle << ")");
+                R1(gate.angle, target_qubit);
+                #endif
+                break;
+            case QuantumGateType::RESET:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling reset_v2(" << target_qubit << ")");
+                reset_v2(target_qubit);
+                #else
+                DEBUG_PRINT("  [qc_runtime] Calling reset(" << target_qubit << ")");
+                reset(target_qubit);
+                #endif
+                break;
+            default:
+                std::cerr << "Error: Unknown single-qubit gate type" << std::endl;
+                context.error_msg = "Unknown single-qubit gate type";
+                return false;
+        }
     } else {
         // 控制门
         unsigned int num_controls = static_cast<unsigned int>(gate.control_qubits.size());
@@ -935,52 +996,112 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
         
         switch (gate.gate_type) {
             case QuantumGateType::X:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCX_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCX_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCX(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCX(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::Y:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCY_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCY_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCY(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCY(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::Z:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCZ_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCZ_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCZ(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCZ(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::H:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCH_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCH_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCH(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCH(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::S:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCS_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCS_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCS(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCS(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::T:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCT_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCT_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCT(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCT(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::ADJS:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCAdjS_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCAdjS_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCAdjS(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCAdjS(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::ADJT:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCAdjT_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
+                MCAdjT_v2(num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCAdjT(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ")");
                 MCAdjT(num_controls, controls, target_qubit);
+                #endif
                 break;
             case QuantumGateType::RX:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MC_RX_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
+                MCRX_v2(gate.angle, num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MC_RX(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
                 MC_RX(num_controls, controls, target_qubit, gate.angle);
+                #endif
                 break;
             case QuantumGateType::RY:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCRY_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
+                MCRY_v2(gate.angle, num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MC_RY(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
                 MC_RY(num_controls, controls, target_qubit, gate.angle);
+                #endif
                 break;
             case QuantumGateType::RZ:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCRZ_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
+                MCRZ_v2(gate.angle, num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MC_RZ(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
                 MC_RZ(num_controls, controls, target_qubit, gate.angle);
+                #endif
                 break;
             case QuantumGateType::R1:
+                #if USE_QC_RUNTIME_V2
+                DEBUG_PRINT("  [qc_runtime] Calling MCR1_v2(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
+                MCR1_v2(gate.angle, num_controls, controls, target_qubit);
+                #else
                 DEBUG_PRINT("  [qc_runtime] Calling MCR1(" << num_controls << ", " << controls_str.str() << ", " << target_qubit << ", " << gate.angle << ")");
                 MCR1(gate.angle, num_controls, controls, target_qubit);
+                #endif
                 break;
             default:
                 std::cerr << "Error: Unknown controlled gate type" << std::endl;
@@ -999,21 +1120,40 @@ bool DefaultQuantumGateHandler::execute_quantum_gate(
 bool DefaultQuantumGateHandler::execute_measurement(
     const MeasureInstruction& measure, 
     ExecutionContext& context) {
-    // 确保qc_runtime已初始化
-    // if (!is_initialized_) {
-    //     std::cerr << "Error: qc_runtime not initialized before executing measurement" << std::endl;
-    //     context.error_msg = "qc_runtime not initialized";
-    //     return false;
-    // }
     
     DEBUG_PRINT("DefaultQuantumGateHandler::execute_measurement() called");
     DEBUG_PRINT("  Qubit index: " << measure.qubit_index);
     DEBUG_PRINT("  Measure reg index: " << measure.measure_reg_index);
+    DEBUG_PRINT("  Basis: " << static_cast<int>(measure.basis));
     
     // 调用实际的测量函数，如实处理所有测量
     unsigned int qubit = static_cast<unsigned int>(measure.qubit_index);
+    #if USE_QC_RUNTIME_V2
+    // 根据测量基确定 PauliV2 枚举值
+    PauliV2 basis = PauliZV2; // 默认使用 Z 基
+    switch (measure.basis)
+    {
+    case MeasureBasis::X:
+        basis = PauliXV2;
+        break;
+    case MeasureBasis::Y:
+        basis = PauliYV2;
+        break;
+    case MeasureBasis::Z:
+        basis = PauliZV2;
+        break;
+    default:
+        std::cerr << "Error: Unknown measure basis" << std::endl;
+        context.error_msg = "Unknown measure basis";
+        return false;
+        break;
+    }
+    DEBUG_PRINT("  [qc_runtime] Calling M_v2(" << qubit << ", " << static_cast<int>(basis) << ")");
+    bool result = M_v2(qubit, basis);
+    #else
     DEBUG_PRINT("  [qc_runtime] Calling M(" << qubit << ")");
     bool result = M(qubit);
+    #endif
     
     // 将测量结果保存到测量寄存器
     std::string reg_name = "m" + std::to_string(measure.measure_reg_index);

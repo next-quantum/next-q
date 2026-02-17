@@ -6,7 +6,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from typing import Callable
 import numpy as np
-from quantum_framework import quantum_kernel, qubit, qvector, h, x, t, mz, swap, sample, control
+from quantum_framework import quantum_kernel, qubit, qvector, h, x, t, mz, swap, sample, control, rx, rz, set_target
+
+set_target('default-cpu-sv')
+# set_target('biren-gpu-sv') 
 
 @quantum_kernel
 def iqft(qubits: qvector):

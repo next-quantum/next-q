@@ -362,7 +362,19 @@ bool SSAParser::parse_measure(const std::string& line, SSAProgram& program) {
     Instruction instr(InstructionType::MEASURE);
     MeasureInstruction& measure = instr.measure;
     
-    measure.basis = match[1];
+    // 解析测量基
+    std::string basis_str = match[1];
+    if (basis_str == "x") {
+        measure.basis = MeasureBasis::X;
+    } else if (basis_str == "y") {
+        measure.basis = MeasureBasis::Y;
+    } else if (basis_str == "z") {
+        measure.basis = MeasureBasis::Z;
+    } else {
+        error_ = "Invalid measure basis at line " + std::to_string(current_line_) + ": " + basis_str;
+        return false;
+    }
+    
     measure.qubit_index = parse_register_index(match[2]);
     measure.measure_reg_index = parse_register_index(match[3]);
     

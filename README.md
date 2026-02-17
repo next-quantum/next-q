@@ -51,15 +51,23 @@ SSA（静态单赋值）汇编是 NEXT-Q 框架的核心输出，具有以下特
 
 ```bash
 cd ssa_simulator
-make  # 编译所有目标
+make -j # 编译所有目标（仅CPU后端）
 make clean  # 清理编译产物
+```
+
+如需启用壁仞GPU后端编译，请使用以下命令：
+
+```bash
+cd ssa_simulator
+make -j enable-biren=1  # 编译壁仞GPU后端
+make clean enable-biren=1 # 清理编译产物
 ```
 
 编译产物包括 Python 扩展模块和独立的 SSA 模拟执行器。
 
 ## 示例
 
-`examples` 目录包含两个框架使用示例：
+`examples` 目录包含四个框架使用示例：
 
 ### example_001.py
 
@@ -70,6 +78,7 @@ make clean  # 清理编译产物
 - 执行量子测量
 - 生成 SSA 汇编
 - 使用 sample 函数进行多次采样
+- 支持两种后端切换：`default-cpu-sv`（CPU向量态模拟器）和`biren-gpu-sv`（壁仞GPU向量态模拟器）
 
 ### example_002.py
 
@@ -80,6 +89,7 @@ make clean  # 清理编译产物
 - 执行量子测量
 - 生成 SSA 汇编
 - 使用 sample 函数进行多次采样
+- 支持两种后端切换：`default-cpu-sv`（CPU向量态模拟器）和`biren-gpu-sv`（壁仞GPU向量态模拟器）
 
 ### example_003.py
 
@@ -90,6 +100,48 @@ make clean  # 清理编译产物
 - 演示量子算法的组合使用
 - 生成并保存 SSA 汇编到文件
 - 使用 sample 函数进行多次采样
+- 支持两种后端切换：`default-cpu-sv`（CPU向量态模拟器）和`biren-gpu-sv`（壁仞GPU向量态模拟器）
+
+### example_004.py
+
+一个MaxCut QAOA（量子近似优化算法）示例，演示了如何：
+- 定义QAOA问题和混合量子内核函数
+- 构建QAOA电路用于图的Max-Cut问题
+- 使用自旋哈密顿量和observe函数进行期望测量
+- 结合经典优化器（scipy.optimize）优化QAOA参数
+- 生成并保存SSA汇编到文件
+- 使用sample函数采样并找出最优分割
+- 支持两种后端切换：`default-cpu-sv`（CPU向量态模拟器）和`biren-gpu-sv`（壁仞GPU向量态模拟器）
+
+## 后端切换
+
+NEXT-Q框架支持两种后端，可以通过`set_target()`函数进行切换：
+
+### 1. default-cpu-sv（CPU向量态模拟器）
+- 默认后端，在没有GPU的环境下使用
+- 基于CPU实现的向量态模拟器
+- 适合小规模量子电路模拟和调试
+
+### 2. biren-gpu-sv（壁仞GPU向量态模拟器）
+- 高性能GPU后端，需要壁仞GPU硬件
+- 基于壁仞GPU实现的向量态模拟器
+- 适合大规模量子电路模拟，提供显著的性能加速
+
+### 切换方法
+
+在Python代码中使用`set_target()`函数切换后端：
+
+```python
+from quantum_framework import set_target
+
+# 使用CPU后端（默认）
+set_target('default-cpu-sv')
+
+# 或者，使用壁仞GPU后端
+set_target('biren-gpu-sv')
+```
+
+注意：使用壁仞GPU后端前，需要先使用`make -j enable-biren=1`编译壁仞GPU后端。
 
 ## 快速开始
 
@@ -105,9 +157,18 @@ cd next-q
 如果需要使用高性能的 C++ 后端，可以编译 ssa_simulator：
 
 ```bash
-# 编译 C++ 后端
+# 编译 C++ 后端（仅CPU后端）
 cd ssa_simulator
 make
+cd ..
+```
+
+如需启用壁仞GPU后端编译，请使用：
+
+```bash
+# 编译壁仞GPU后端
+cd ssa_simulator
+make -j enable-biren=1
 cd ..
 ```
 
@@ -117,7 +178,9 @@ cd ..
 
 ```bash
 cd ssa_simulator
-make
+make  # 仅CPU后端
+# 或
+make -j enable-biren=1  # 启用壁仞GPU后端
 cd ..
 ```
 
@@ -125,6 +188,9 @@ cd ..
 
 ```python
 from quantum_framework import quantum_kernel, qvector, h, x, mz, sample
+
+# 使用CPU后端（默认）
+set_target('default-cpu-sv') # 或者，使用壁仞GPU后端 et_target('biren-gpu-sv')
 
 @quantum_kernel
 def my_quantum_program():

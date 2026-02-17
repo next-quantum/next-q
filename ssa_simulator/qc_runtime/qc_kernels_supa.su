@@ -1,0 +1,179 @@
+#include <cstdint>
+
+#include <device/supa_device_types.h>
+#include <tensor/wti/ldm.h>
+#include <tensor/wti/reduce.h>
+#include <tensor/wti/stm.h>
+#include <tensor/wti/types.h>
+
+#include "su_complex.suh"
+#include "qc_kernels_supa.suh"
+
+namespace QC_V2 {
+namespace BIREN_GPU {
+
+__device__ inline uint32_t nth_cleared(uint32_t const index, uint32_t const target_power) {
+  uint32_t const mask = target_power - 1;
+  uint32_t const not_mask = ~mask;
+
+  return (index & mask) | ((index & not_mask) << 1);
+}
+
+__global__ void apply_gate_one(
+  suFloatComplex* stateVector,
+
+  suFloatComplex const m00,
+  suFloatComplex const m01,
+  suFloatComplex const m10,
+  suFloatComplex const m11,
+  
+  uint32_t const target,
+  uint32_t const controlMask
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  unsigned int C = 1 << target;
+  unsigned int X = nth_cleared(gid, C); // 0
+  unsigned int Y = X + C;               // 1
+
+  auto const v0 = stateVector[X];
+  auto const v1 = stateVector[Y];
+
+  if ((X & controlMask) == controlMask)
+  {
+    //stateVector[X] = (cuCadd(cuCmul(v0, m00), cuCmul(v1, m01)));
+    //stateVector[Y] = (cuCadd(cuCmul(v0, m10), cuCmul(v1, m11)));
+
+    stateVector[X].x = (v0.x * m00.x - v0.y * m00.y) + (v1.x * m01.x - v1.y * m01.y);
+    stateVector[X].y = (v0.x * m00.y + v0.y * m00.x) + (v1.x * m01.y + v1.y * m01.x);
+
+    stateVector[Y].x = (v0.x * m10.x - v0.y * m10.y) + (v1.x * m11.x - v1.y * m11.y);
+    stateVector[Y].y = (v0.x * m10.y + v0.y * m10.x) + (v1.x * m11.y + v1.y * m11.x);
+  }
+}
+
+__global__ void find_probability_of_outcome_zero(
+  suFloatComplex* stateVector,
+  float* output,
+  uint32_t const target
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  unsigned int C = 1 << target;
+  unsigned int X = nth_cleared(gid, C); // 0
+
+  float const re = stateVector[X].x;
+  float const im = stateVector[X].y;
+
+  float1 value = re * re + im * im;
+
+  tensor::wti::__reduce_buf<1, tensor::wti::REDUCE_SUM> grb;
+
+  // write to grb
+  tensor::wti::__warp_reduce(&grb, value);
+
+  float2 results;
+  tensor::wti::__get_reduce_buf_broadcast(&results, grb, 0);
+
+  // *output += results.x;
+  if (warp_thread_idx == 0) {
+    atomicAdd(output, results.x);
+  }
+}
+
+__global__ void collapse_to_outcome_scale(
+  suFloatComplex* stateVector,
+  uint32_t const target,
+  float const scale,
+  bool const one, // whether set outcome one?
+  bool const noNorm // whether skip normalization
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  unsigned int C = 1 << target;
+  unsigned int X = nth_cleared(gid, C); // 0
+  unsigned int Y = X + C;               // 1
+
+  // in case of noNorm, exchange zero and 1 states
+  if (noNorm) {
+    auto const xCopy = stateVector[X];
+    auto const yCopy = stateVector[Y];
+    
+    stateVector[X].x = one ? 0.0f : yCopy.x;
+    stateVector[X].y = one ? 0.0f : yCopy.y;
+
+    stateVector[Y].x = one ? xCopy.x : 0.0f;
+    stateVector[Y].y = one ? xCopy.y : 0.0f;
+  }
+
+  stateVector[X].x = one ? 0.0f : stateVector[X].x * scale;
+  stateVector[X].y = one ? 0.0f : stateVector[X].y * scale;
+
+  stateVector[Y].x = one ? stateVector[Y].x * scale : 0.0f;
+  stateVector[Y].y = one ? stateVector[Y].y * scale : 0.0f;
+}
+
+__global__ void store_state_vector(
+  suFloatComplex* stateVectorBuffer,
+  suFloatComplex const* stateVector
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  stateVectorBuffer[gid] = stateVector[gid];
+}
+
+__global__ void dot_state_vector(
+  suFloatComplex const* stateVector,
+  suFloatComplex const* stateVectorBuffer,
+  float* output
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  // float1 value = stateVector[gid].x * stateVectorBuffer[gid].x + stateVector[gid].y * stateVectorBuffer[gid].y;
+  float const a1 = stateVectorBuffer[gid].x;
+  float const b1 = -stateVectorBuffer[gid].y;
+  float const a2 = stateVector[gid].x;
+  float const b2 = stateVector[gid].y;
+  float1 value = a1 * a2 - b1 * b2;
+
+  tensor::wti::__reduce_buf<1, tensor::wti::REDUCE_SUM> grb;
+
+  // write to grb
+  tensor::wti::__warp_reduce(&grb, value);
+
+  float2 results;
+  tensor::wti::__get_reduce_buf_broadcast(&results, grb, 0);
+
+  // *output += results.x;
+  if (warp_thread_idx == 0) {
+    atomicAdd(output, results.x);
+  }
+}
+
+__global__ void norm_state_vector(
+  suFloatComplex const* stateVector,
+  float* output
+) {
+  unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  float const re = stateVector[gid].x;
+  float const im = stateVector[gid].y;
+
+  float1 value = re * re + im * im;
+
+  tensor::wti::__reduce_buf<1, tensor::wti::REDUCE_SUM> grb;
+
+  // write to grb
+  tensor::wti::__warp_reduce(&grb, value);
+
+  float2 results;
+  tensor::wti::__get_reduce_buf_broadcast(&results, grb, 0);
+
+  // *output += results.x;
+  if (warp_thread_idx == 0) {
+    atomicAdd(output, results.x);
+  }
+}
+
+}
+}

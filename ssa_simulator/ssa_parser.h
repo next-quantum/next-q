@@ -83,13 +83,20 @@ struct QGateInstruction {
     QGateInstruction() : gate_type(QuantumGateType::UNKNOWN), adjoint(false), angle(0.0) {}
 };
 
+// 测量基枚举
+enum class MeasureBasis {
+    X,  // X基
+    Y,  // Y基
+    Z   // Z基
+};
+
 // 测量指令结构体
 struct MeasureInstruction {
-    std::string basis;                       // 测量基（z, x, y）
+    MeasureBasis basis;                       // 测量基
     int32 qubit_index;                         // 被测量的量子比特索引
     int32 measure_reg_index;                   // 测量结果存储的寄存器索引
     
-    MeasureInstruction() : qubit_index(-1), measure_reg_index(-1) {}
+    MeasureInstruction() : basis(MeasureBasis::Z), qubit_index(-1), measure_reg_index(-1) {}
 };
 
 // 移动指令结构体

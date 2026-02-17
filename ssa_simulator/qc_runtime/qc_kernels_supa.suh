@@ -1,0 +1,51 @@
+#pragma once
+
+#include "su_complex.suh"
+
+namespace QC_V2 {
+namespace BIREN_GPU {
+
+__global__ void apply_gate_one(
+  suFloatComplex* stateVector,
+
+  suFloatComplex const m00,
+  suFloatComplex const m01,
+  suFloatComplex const m10,
+  suFloatComplex const m11,
+  
+  uint32_t const target,
+  uint32_t const controlMask
+);
+
+__global__ void find_probability_of_outcome_zero(
+  suFloatComplex* stateVector,
+  float* output,
+  uint32_t const target
+);
+
+__global__ void collapse_to_outcome_scale(
+  suFloatComplex* stateVector,
+  uint32_t const target,
+  float const scale,
+  bool const one, // whether set outcome one?
+  bool const noNorm // whether skip normalization
+);
+
+__global__ void store_state_vector(
+  suFloatComplex* stateVectorBuffer,
+  suFloatComplex const* stateVector
+);
+
+__global__ void dot_state_vector(
+  suFloatComplex const* stateVector,
+  suFloatComplex const* stateVectorBuffer,
+  float* output
+);
+
+__global__ void norm_state_vector(
+  suFloatComplex const* stateVector,
+  float* output
+);
+
+}
+}

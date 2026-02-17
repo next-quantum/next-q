@@ -36,6 +36,8 @@ class QuantumGateAttribute(enum.Enum):
 
 class QuantumFunction(enum.Enum):
     """量子函数枚举"""
+    MX = 'mx'      # 测量X操作
+    MY = 'my'      # 测量Y操作
     MZ = 'mz'      # 测量操作
     QVECTOR = 'qvector'  # 创建量子向量
     QUBIT = 'qubit'      # 创建单个量子比特
@@ -237,16 +239,18 @@ class QuantumGate:
 class Measurement:
     """测量类，代表量子电路中的一个测量操作"""
     
-    def __init__(self, qubit: Qubit, measurement_reg: Optional[int] = None):
+    def __init__(self, qubit: Qubit, measurement_reg: Optional[int] = None, measure_type: str = 'z'):
         self.qubit: Qubit = qubit
         self.measurement_reg: Optional[int] = measurement_reg  # 测量寄存器编号
+        self.measure_type: str = measure_type  # 测量类型： 'x', 'y', 'z'
         self.result: Optional[int] = None
 
     def __repr__(self):
+        measure_prefix = f'm{self.measure_type}'
         if self.measurement_reg is not None:
-            return f'mz({self.qubit}) to measurement reg {self.measurement_reg}'
+            return f'{measure_prefix}({self.qubit}) to measurement reg {self.measurement_reg}'
         else:
-            return f'mz({self.qubit})'
+            return f'{measure_prefix}({self.qubit})'
 
 
 class MeasureToClassicalOperation:
@@ -487,10 +491,29 @@ def _get_qubits_from_args(args: List[Any]) -> List[Qubit]:
 # 全局函数：检查节点是否是mz函数调用
 
 
+def _is_measure_call(node: ast.AST) -> bool:
+    """检查节点是否是测量函数调用（mz、mx或my）"""
+    return isinstance(node, ast.Call) and isinstance(
+        node.func, ast.Name) and node.func.id in [QuantumFunction.MX.value, QuantumFunction.MY.value, QuantumFunction.MZ.value]
+
+
 def _is_mz_call(node: ast.AST) -> bool:
     """检查节点是否是mz函数调用"""
     return isinstance(node, ast.Call) and isinstance(
         node.func, ast.Name) and node.func.id == QuantumFunction.MZ.value
+
+
+def _get_measure_type(node: ast.AST) -> str:
+    """获取测量函数调用的类型（z、x或y）"""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        func_id = node.func.id
+        if func_id == QuantumFunction.MX.value:
+            return 'x'
+        elif func_id == QuantumFunction.MY.value:
+            return 'y'
+        elif func_id == QuantumFunction.MZ.value:
+            return 'z'
+    return 'z'
 
 # 全局函数：从比较表达式中提取寄存器编号
 
@@ -499,14 +522,16 @@ def _extract_reg_from_compare(compare: ast.Compare, visitor) -> Optional[int]:
     """从比较表达式中提取寄存器编号"""
     left = compare.left
 
-    # 处理测量比较：if mz(q0) == 1:
-    if _is_mz_call(left):
+    # 处理测量比较：if mz(q0) == 1: 或 if mx(q0) == 1: 或 if my(q0) == 1:
+    if _is_measure_call(left):
         qubit_arg = left.args[0]
         qubit_or_qvector = visitor.evaluator.evaluate(qubit_arg)
         if isinstance(qubit_or_qvector, Qubit):
             qubit = qubit_or_qvector
+            # 获取测量类型
+            measure_type = _get_measure_type(left)
             # 先添加测量操作
-            measurement = Measurement(qubit)
+            measurement = Measurement(qubit, measure_type=measure_type)
             visitor.circuit.add_measurement(measurement)
             # 然后将测量结果分配到经典寄存器，确保测量结果被正确保存
             return visitor.measurement_handler.add_measure_to_classical(
@@ -1157,13 +1182,43 @@ class MeasurementHandler:
 
         return classical_reg
 
-    def is_mz_call(self, node) -> bool:
-        """检查节点是否是mz函数调用"""
-        return isinstance(
-            node,
-            ast.Call) and isinstance(
-            node.func,
-            ast.Name) and node.func.id == QuantumFunction.MZ.value
+    def handle_measure_call(
+            self,
+            evaluated_args: List[Any],
+            return_value: bool = False,
+            var_name: Optional[str] = None,
+            measure_type: str = 'z') -> Any:
+        """处理测量调用（mz、mx或my）
+
+        Args:
+            evaluated_args: 已评估的参数列表，包含要测量的量子比特
+            return_value: 是否在表达式上下文中调用
+                          - False: 直接调用上下文，生成测量操作
+                          - True: 表达式上下文，生成测量操作，但返回占位值
+            var_name: 可选的变量名，用于将测量结果映射到经典寄存器
+            measure_type: 测量类型：'x', 'y', 'z'
+
+        Returns:
+            None或空列表，因为我们不执行真正的测量，只记录测量操作
+        """
+        target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
+            evaluated_args)
+
+        # 对每个量子比特，先执行测量，再分配到经典寄存器
+        # 这样可以确保测量操作和赋值操作交替执行，与预期的ASM顺序一致
+        for qubit in target_qubits:
+            # 在所有上下文中都生成测量操作，确保条件表达式中的测量也能被正确处理
+            measurement: Measurement = Measurement(qubit, measure_type=measure_type)
+            self.visitor.circuit.add_measurement(measurement)
+
+            # 如果提供了var_name，将测量结果分配到经典寄存器
+            # 支持将多个量子比特的测量结果映射到同一个变量名
+            # 这允许后续使用all()/any()等函数处理多个测量结果
+            if var_name:
+                self.add_measure_to_classical(qubit.index, var_name)
+
+        # 我们不执行真正的测量，只返回占位值
+        return None if len(target_qubits) == 1 else []
 
     def handle_mz_call(
             self,
@@ -1182,24 +1237,7 @@ class MeasurementHandler:
         Returns:
             None或空列表，因为我们不执行真正的测量，只记录测量操作
         """
-        target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
-            evaluated_args)
-
-        # 对每个量子比特，先执行测量，再分配到经典寄存器
-        # 这样可以确保测量操作和赋值操作交替执行，与预期的ASM顺序一致
-        for qubit in target_qubits:
-            # 在所有上下文中都生成测量操作，确保条件表达式中的测量也能被正确处理
-            measurement: Measurement = Measurement(qubit)
-            self.visitor.circuit.add_measurement(measurement)
-
-            # 如果提供了var_name，将测量结果分配到经典寄存器
-            # 支持将多个量子比特的测量结果映射到同一个变量名
-            # 这允许后续使用all()/any()等函数处理多个测量结果
-            if var_name:
-                self.add_measure_to_classical(qubit.index, var_name)
-
-        # 我们不执行真正的测量，只返回占位值
-        return None if len(target_qubits) == 1 else []
+        return self.handle_measure_call(evaluated_args, return_value, var_name, 'z')
 
 
 class QubitHandler:
@@ -1295,6 +1333,9 @@ class QubitHandler:
             elif isinstance(arg, QVector):
                 # 支持切片后的量子向量：qubits[0:2]
                 target_qubits.extend(arg.qubits)
+            elif isinstance(arg, list):
+                # 处理列表参数，如 [q1]
+                target_qubits.extend(self.get_target_qubits(arg))
             # 不处理条件表达式，因为它们会在_handle_call中被特殊处理
         return target_qubits
 
@@ -1421,25 +1462,27 @@ class BoolOpHandler:
         return None
 
     def _handle_compare_operand(self, operand: ast.Compare) -> Optional[int]:
-        """处理比较表达式操作数，如 result > 0 或 mz(q0) == 1"""
-        # 处理测量操作，如 mz(q0) == 1
-        if _is_mz_call(operand.left):
-            return self._handle_mz_compare_operand(operand)
+        """处理比较表达式操作数，如 result > 0 或 mz(q0) == 1 或 mx(q0) == 1 或 my(q0) == 1"""
+        # 处理测量操作，如 mz(q0) == 1、mx(q0) == 1 或 my(q0) == 1
+        if _is_measure_call(operand.left):
+            return self._handle_measure_compare_operand(operand)
         # 处理普通比较表达式，如 result > 0
         elif isinstance(operand.left, ast.Name):
             return self._handle_var_compare_operand(operand)
         return None
 
-    def _handle_mz_compare_operand(
+    def _handle_measure_compare_operand(
             self, compare: ast.Compare) -> Optional[int]:
-        """处理测量比较操作数，如 mz(q0) == 1"""
+        """处理测量比较操作数，如 mx(q0) == 1、my(q0) == 1 或 mz(q0) == 1"""
         # 提取测量操作的量子比特
         qubit_arg = compare.left.args[0]
         qubit_or_qvector = self.visitor.evaluator.evaluate(qubit_arg)
         if isinstance(qubit_or_qvector, Qubit):
             qubit = qubit_or_qvector
+            # 获取测量类型
+            measure_type = _get_measure_type(compare.left)
             # 生成测量操作
-            measurement = Measurement(qubit)
+            measurement = Measurement(qubit, measure_type=measure_type)
             self.visitor.circuit.add_measurement(measurement)
             # 将测量结果分配到经典寄存器
             reg = self.visitor.measurement_handler.add_measure_to_classical(
@@ -1597,7 +1640,8 @@ class CallHandler:
                 # 内联_find_var_by_value逻辑
                 var_name = None
                 for name, var_value in self.visitor.variables.items():
-                    if var_value == item:
+                    # 确保类型匹配后再进行比较
+                    if type(var_value) == type(item) and var_value == item:
                         var_name = name
                         break
                 return item, var_name
@@ -1610,7 +1654,8 @@ class CallHandler:
                 # 检查QVector是否直接等于动态量子比特变量
                 qvector_var_name = None
                 for name, var_value in self.visitor.variables.items():
-                    if var_value == item:
+                    # 只有当var_value也是QVector时才进行比较
+                    if isinstance(var_value, QVector) and var_value == item:
                         qvector_var_name = name
                         break
                 if qvector_var_name:
@@ -1676,9 +1721,16 @@ class CallHandler:
             evaluated_args = [
                 self.visitor.evaluator.evaluate(arg) for arg in node.args]
 
-        if func_name == QuantumFunction.MZ.value:
-            # 处理测量操作，传递var_name参数
-            return self._handle_mz_call(evaluated_args, return_value, var_name)
+        if func_name in [QuantumFunction.MZ.value, QuantumFunction.MX.value, QuantumFunction.MY.value]:
+            # 处理测量操作，传递var_name参数和测量类型
+            measure_type = 'z'
+            if func_name == QuantumFunction.MX.value:
+                measure_type = 'x'
+            elif func_name == QuantumFunction.MY.value:
+                measure_type = 'y'
+            elif func_name == QuantumFunction.MZ.value:
+                measure_type = 'z'
+            return self._handle_measure_call(evaluated_args, return_value, var_name, measure_type)
         elif func_name == QuantumFunction.QVECTOR.value:
             # 处理量子向量创建
             return self._handle_qvector_call(
@@ -1774,14 +1826,23 @@ class CallHandler:
             return self._get_gate_name(node.func)
         return ''
 
+    def _handle_measure_call(
+            self,
+            evaluated_args: List[Any],
+            return_value: bool = False,
+            var_name: Optional[str] = None,
+            measure_type: str = 'z') -> Any:
+        """处理测量调用（mz、mx或my）"""
+        return self.visitor.measurement_handler.handle_measure_call(
+            evaluated_args, return_value, var_name, measure_type)
+
     def _handle_mz_call(
             self,
             evaluated_args: List[Any],
             return_value: bool = False,
             var_name: Optional[str] = None) -> Any:
         """处理mz（测量）调用"""
-        return self.visitor.measurement_handler.handle_mz_call(
-            evaluated_args, return_value, var_name)
+        return self._handle_measure_call(evaluated_args, return_value, var_name, 'z')
 
     def _handle_qvector_call(
             self,
@@ -1861,7 +1922,7 @@ class CallHandler:
                            node: ast.Call,
                            return_value: bool = False,
                            evaluated_args: Optional[List[Any]] = None) -> None:
-        """处理链式调用，如 x.adj()(q0) 或 x.ctrl(q0)(q1) 或 x.ctrl(q0).adj()(q1)"""
+        """处理链式调用，如 x.adj()(q0) 或 x.ctrl(q0)(q1) 或 x.ctrl([q0])([q1]) 或 x.ctrl(q0).adj()(q1)"""
         # 使用传递的评估后参数，避免重复评估
         if evaluated_args is None:
             evaluated_args_list: List[Any] = [
@@ -1869,39 +1930,54 @@ class CallHandler:
         else:
             evaluated_args_list = evaluated_args
 
-        # 从链式调用中提取门名和属性信息
-        gate_name = self._get_gate_name(node.func.func.value)
+        # 解析链式结构
+        current = node.func
+        adjoint = False
+        controls = []
+        gate_name = None
+        
+        # 沿着函数调用链往上找
+        while True:
+            if isinstance(current, ast.Call):
+                # 如果是Call节点，检查它的func
+                if isinstance(current.func, ast.Attribute):
+                    attr_name = current.func.attr
+                    if attr_name == QuantumGateAttribute.CTRL.value:
+                        # 提取控制位
+                        ctrl_args = [self.visitor.evaluator.evaluate(arg) for arg in current.args]
+                        controls = _get_qubits_from_args(ctrl_args)
+                        # 继续往上找
+                        current = current.func.value
+                    elif attr_name == QuantumGateAttribute.ADJ.value:
+                        adjoint = True
+                        # 继续往上找
+                        current = current.func.value
+                    else:
+                        # 未知属性，停止
+                        gate_name = self._get_gate_name(current.func.value)
+                        break
+                else:
+                    # 不是Attribute，停止
+                    gate_name = self._get_gate_name(current)
+                    break
+            elif isinstance(current, ast.Attribute):
+                # 是Attribute，直接获取门名
+                gate_name = self._get_gate_name(current.value)
+                break
+            elif isinstance(current, ast.Name):
+                # 是Name，直接获取门名
+                gate_name = current.id
+                break
+            else:
+                # 其他情况，用_get_gate_name
+                gate_name = self._get_gate_name(current)
+                break
         
         # 提取旋转门参数
         angle, target_args = self._extract_rotation_params(gate_name, evaluated_args_list)
         
         target_qubits: List[Qubit] = self.visitor.qubit_handler.get_target_qubits(
             target_args)
-
-        adjoint = False
-        controls = []
-
-        # 处理共轭转置链
-        if node.func.func.attr == QuantumGateAttribute.ADJ.value:
-            adjoint = True
-            # 检查是否是受控门的共轭转置，如 x.ctrl(q0).adj()(q1)
-            if isinstance(
-                    node.func.func.value,
-                    ast.Call) and isinstance(
-                    node.func.func.value.func,
-                    ast.Attribute) and node.func.func.value.func.attr == QuantumGateAttribute.CTRL.value:
-                # 提取控制位
-                ctrl_call = node.func.func.value
-                ctrl_args = [self.visitor.evaluator.evaluate(
-                    arg) for arg in ctrl_call.args]
-                controls = _get_qubits_from_args(ctrl_args)
-        # 处理受控门链
-        elif node.func.func.attr == QuantumGateAttribute.CTRL.value:
-            # 提取控制位
-            ctrl_call = node.func
-            ctrl_args = [self.visitor.evaluator.evaluate(
-                arg) for arg in ctrl_call.args]
-            controls = _get_qubits_from_args(ctrl_args)
 
         # 创建量子操作
         self.visitor.qubit_handler.create_quantum_operation(
@@ -2025,8 +2101,8 @@ class AssignmentHandler:
             node: ast.Assign,
             value: Any) -> None:
         """处理单个变量赋值"""
-        if _is_mz_call(node.value):
-            # 处理测量结果赋值
+        if _is_measure_call(node.value):
+            # 处理测量结果赋值（mz、mx或my）
             self._handle_mz_result_assign(var_name, node.value)
         elif isinstance(node.value, ast.IfExp):
             # 处理条件表达式赋值：target_qubit = qubits[1] if condition else qubits[2]
@@ -2051,16 +2127,18 @@ class AssignmentHandler:
             self,
             var_name: str,
             mz_call: ast.Call) -> None:
-        """处理测量结果赋值：result = mz(q1)"""
+        """处理测量结果赋值：result = mz(q1) 或 result = mx(q1) 或 result = my(q1)"""
+        # 获取测量类型
+        measure_type = _get_measure_type(mz_call)
         # 获取测量的量子比特或量子向量
         qubit_arg = mz_call.args[0]
         qubit_or_qvector: Any = self.visitor.evaluator.evaluate(qubit_arg)
 
         if isinstance(qubit_or_qvector, Qubit):
-            # 测量单个量子比特：result = mz(q1)
+            # 测量单个量子比特：result = mz(q1) 或 result = mx(q1) 或 result = my(q1)
             qubit: Qubit = qubit_or_qvector
             # 为单个量子比特添加测量操作
-            measurement: Measurement = Measurement(qubit)
+            measurement: Measurement = Measurement(qubit, measure_type=measure_type)
             self.visitor.circuit.add_measurement(measurement)
             # 直接使用量子比特索引作为测量寄存器编号
             measurement_reg: int = qubit.index
@@ -2068,11 +2146,11 @@ class AssignmentHandler:
             self.visitor.measurement_handler.add_measure_to_classical(
                 measurement_reg, var_name)
         elif isinstance(qubit_or_qvector, QVector):
-            # 测量量子向量：result = mz(sub_qubits)
+            # 测量量子向量：result = mz(sub_qubits) 或 result = mx(sub_qubits) 或 result = my(sub_qubits)
             qvector: QVector = qubit_or_qvector
             # 为每个量子比特添加测量操作
             for qubit in qvector.qubits:
-                measurement: Measurement = Measurement(qubit)
+                measurement: Measurement = Measurement(qubit, measure_type=measure_type)
                 self.visitor.circuit.add_measurement(measurement)
                 # 为每个量子比特分配经典寄存器
                 self.visitor.measurement_handler.add_measure_to_classical(
@@ -2298,14 +2376,117 @@ class QuantumProgramVisitor(ast.NodeVisitor):
         self.loop_handler.handle_while(node)
 
 
+class BackendTarget(enum.Enum):
+    """后端目标枚举，支持多种加速器类型"""
+    DEFAULT_CPU_SV = 'default-cpu-sv'
+    NVIDIA_GPU_SV = 'nvidia-gpu-sv'
+    AMD_GPU_SV = 'amd-gpu-sv'
+    BIREN_GPU_SV = 'biren-gpu-sv'
+    METAX_GPU_SV = 'metax-gpu-sv'
+    MOORE_THREADS_GPU_SV = 'moore-threads-gpu-sv'
+    ILUVATAR_GPU_SV = 'iluvatar-gpu-sv'
+    APPLE_GPU_SV = 'apple-gpu-sv'
+    OPENCL_SV = 'opencl-sv'
+
+    @classmethod
+    def is_valid(cls, target: str) -> bool:
+        """检查目标是否有效"""
+        return target in [member.value for member in cls]
+
+    @classmethod
+    def get_supported_targets(cls) -> List[str]:
+        """获取所有支持的目标列表"""
+        return [member.value for member in cls]
+
+
 # 全局配置变量
-_current_target = 'cpu'  # 后端目标设置
+_current_target = BackendTarget.DEFAULT_CPU_SV.value  # 后端目标设置
 
 
 def set_target(target: str):
     """设置后端目标"""
     global _current_target
-    _current_target = target
+    if not BackendTarget.is_valid(target):
+        supported = BackendTarget.get_supported_targets()
+        warnings.warn(f"Warning: Unknown backend target '{target}'. Using default 'default-cpu-sv'. Supported targets: {', '.join(supported)}")
+        _current_target = BackendTarget.DEFAULT_CPU_SV.value
+    else:
+        _current_target = target
+
+
+def get_target() -> str:
+    """获取当前后端目标"""
+    global _current_target
+    return _current_target
+
+
+def list_targets() -> List[str]:
+    """列出所有支持的后端目标"""
+    return BackendTarget.get_supported_targets()
+
+
+class BackendManager:
+    """后端管理器，负责管理不同后端的模拟器实例"""
+    
+    _instance = None
+    
+    def __new__(cls):
+        """单例模式"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._simulators = {}
+            cls._instance._default_simulator = None
+        return cls._instance
+    
+    def __init__(self):
+        """初始化后端管理器"""
+        if not hasattr(self, '_simulators'):
+            self._simulators = {}
+            self._default_simulator = None
+    
+    def get_simulator(self, target: Optional[str] = None):
+        """获取指定目标的模拟器实例"""
+        if target is None:
+            target = get_target()
+        
+        # 如果是 default-cpu-sv 或其他 CPU 后端，使用 SSA 模拟器
+        if target in [BackendTarget.DEFAULT_CPU_SV.value]:
+            if self._default_simulator is None:
+                self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+            return self._default_simulator
+        
+        # biren-gpu-sv 后端
+        if target == BackendTarget.BIREN_GPU_SV.value:
+            if target not in self._simulators:
+                print(f"[BackendManager] Initializing Biren GPU SV backend")
+                try:
+                    # 创建 SSA 模拟器实例，传递 biren-gpu-sv 后端参数
+                    simulator = ssa_simulator_cpp.SSASimulator(backend_type="biren-gpu-sv")
+                    self._simulators[target] = simulator
+                    print(f"[BackendManager] Biren GPU SV backend initialized successfully")
+                except Exception as e:
+                    warnings.warn(f"Failed to initialize Biren GPU SV backend: {e}. Falling back to 'default-cpu-sv'.")
+                    if self._default_simulator is None:
+                        self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+                    self._simulators[target] = self._default_simulator
+            return self._simulators[target]
+        
+        # 对于其他后端，预留接口，目前暂时返回默认模拟器
+        if target not in self._simulators:
+            warnings.warn(f"Backend '{target}' is not implemented yet. Falling back to 'default-cpu-sv'.")
+            if self._default_simulator is None:
+                self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+            self._simulators[target] = self._default_simulator
+        
+        return self._simulators[target]
+    
+    def register_simulator(self, target: str, simulator_class):
+        """注册自定义模拟器"""
+        self._simulators[target] = simulator_class()
+
+
+# 全局后端管理器实例
+_backend_manager = BackendManager()
 
 
 def quantum_kernel(func: Callable) -> QuantumProgram:
@@ -2328,9 +2509,11 @@ def quantum_kernel(func: Callable) -> QuantumProgram:
 
 def sample(program: QuantumProgram, *args, shots_count: int = 1000, **kwargs) -> Dict[str, int]:
     """运行量子程序并返回测量结果"""
+    
+    target = kwargs.get('target', get_target())
 
-    # 创建模拟器实例
-    simulator = ssa_simulator_cpp.SSASimulator()
+    # 获取模拟器实例
+    simulator = _backend_manager.get_simulator(target)
     
     # 生成SSA汇编代码，传递args作为prog的参数
     ssa_assembly = program.generate_ssa_assembly(*args, **kwargs)
@@ -2347,9 +2530,18 @@ def sample(program: QuantumProgram, *args, shots_count: int = 1000, **kwargs) ->
 
 
 # 测量函数
+
+def mx(qubit: Qubit) -> Measurement:
+    """测量函数，创建一个x轴测量操作"""
+    return Measurement(qubit, measure_type='x')
+
+def my(qubit: Qubit) -> Measurement:
+    """测量函数，创建一个y轴测量操作"""
+    return Measurement(qubit, measure_type='y')
+
 def mz(qubit: Qubit) -> Measurement:
-    """测量函数，创建一个测量操作"""
-    return Measurement(qubit)
+    """测量函数，创建一个z轴测量操作"""
+    return Measurement(qubit, measure_type='z')
 
 # 创建控制函数
 def control(kernel, control_qubits, target_qubit):
@@ -2555,7 +2747,7 @@ class SSAAssembler:
         qubit_reg = self.get_qubit_reg(op.qubit)
         meas_reg = f"m{op.measurement_reg}"
         self.measure_regs.add(meas_reg)
-        self.add_line(f"measure.z {qubit_reg}, {meas_reg}")
+        self.add_line(f"measure.{op.measure_type} {qubit_reg}, {meas_reg}")
 
     def _generate_assign(self, op):
         """生成赋值操作的汇编"""
@@ -2787,3 +2979,254 @@ class SSAAssembler:
         self.classical_regs.add(index_reg)
         self.add_line(
             f"qreg.dynamic {op.var_name}, {index_reg}, {op.qvector_size}")
+
+
+class SpinOperator:
+    """自旋算符类，用于表示量子系统中的自旋算符"""
+    
+    def __init__(self, op_type: str, qubit: Union[Qubit, int]):
+        """初始化自旋算符
+        
+        Args:
+            op_type: 算符类型，如 'z', 'i' 等
+            qubit: 量子比特或量子比特索引
+        """
+        self.op_type = op_type
+        self.qubit = qubit
+    
+    def __mul__(self, other):
+        """实现算符乘法"""
+        if isinstance(other, SpinOperator):
+            # 创建一个乘积算符
+            return ProductOperator(self, other)
+        return NotImplemented
+    
+    def __add__(self, other):
+        """实现算符加法"""
+        if isinstance(other, (SpinOperator, ProductOperator, Hamiltonian)):
+            return Hamiltonian([(1.0, self), (1.0, other)])
+        return NotImplemented
+    
+    def __sub__(self, other):
+        """实现算符减法"""
+        if isinstance(other, (SpinOperator, ProductOperator, Hamiltonian)):
+            return Hamiltonian([(1.0, self), (-1.0, other)])
+        return NotImplemented
+    
+    def __rmul__(self, scalar):
+        """实现标量乘法（右侧）"""
+        if isinstance(scalar, (int, float)):
+            return Hamiltonian([(scalar, self)])
+        return NotImplemented
+    
+    def __repr__(self):
+        """返回算符的字符串表示"""
+        qubit_idx = self.qubit.index if isinstance(self.qubit, Qubit) else self.qubit
+        return f"spin.{self.op_type}({qubit_idx})"
+
+
+class ProductOperator:
+    """乘积算符类，用于表示多个自旋算符的乘积"""
+    
+    def __init__(self, *operators):
+        """初始化乘积算符
+        
+        Args:
+            *operators: 要相乘的算符
+        """
+        self.operators = []
+        for op in operators:
+            if isinstance(op, ProductOperator):
+                # 展开乘积算符，避免嵌套
+                self.operators.extend(op.operators)
+            else:
+                self.operators.append(op)
+    
+    def __mul__(self, other):
+        """实现算符乘法"""
+        if isinstance(other, (SpinOperator, ProductOperator)):
+            return ProductOperator(self, other)
+        return NotImplemented
+    
+    def __add__(self, other):
+        """实现算符加法"""
+        if isinstance(other, (SpinOperator, ProductOperator, Hamiltonian)):
+            return Hamiltonian([(1.0, self), (1.0, other)])
+        return NotImplemented
+    
+    def __sub__(self, other):
+        """实现算符减法"""
+        if isinstance(other, (SpinOperator, ProductOperator, Hamiltonian)):
+            return Hamiltonian([(1.0, self), (-1.0, other)])
+        return NotImplemented
+    
+    def __rmul__(self, scalar):
+        """实现标量乘法（右侧）"""
+        if isinstance(scalar, (int, float)):
+            return Hamiltonian([(scalar, self)])
+        return NotImplemented
+    
+    def __repr__(self):
+        """返回算符的字符串表示"""
+        return " * ".join([repr(op) for op in self.operators])
+
+
+class Hamiltonian:
+    """哈密顿量类，用于表示量子系统的哈密顿量"""
+    
+    def __init__(self, terms=None):
+        """初始化哈密顿量
+        
+        Args:
+            terms: 哈密顿量的项，格式为 [(系数, 算符), ...]
+        """
+        self.terms = terms if terms is not None else []
+    
+    def __add__(self, other):
+        """实现哈密顿量加法"""
+        if isinstance(other, Hamiltonian):
+            return Hamiltonian(self.terms + other.terms)
+        elif isinstance(other, (SpinOperator, ProductOperator)):
+            return Hamiltonian(self.terms + [(1.0, other)])
+        return NotImplemented
+    
+    def __iadd__(self, other):
+        """实现哈密顿量就地加法"""
+        if isinstance(other, Hamiltonian):
+            self.terms.extend(other.terms)
+        elif isinstance(other, (SpinOperator, ProductOperator)):
+            self.terms.append((1.0, other))
+        elif isinstance(other, tuple) and len(other) == 2:
+            # 处理 (系数, 算符) 形式的项
+            self.terms.append(other)
+        return self
+    
+    def __sub__(self, other):
+        """实现哈密顿量减法"""
+        if isinstance(other, Hamiltonian):
+            negated_terms = [(-coef, op) for coef, op in other.terms]
+            return Hamiltonian(self.terms + negated_terms)
+        elif isinstance(other, (SpinOperator, ProductOperator)):
+            return Hamiltonian(self.terms + [(-1.0, other)])
+        return NotImplemented
+    
+    def __rmul__(self, scalar):
+        """实现标量乘法（右侧）"""
+        if isinstance(scalar, (int, float)):
+            scaled_terms = [(scalar * coef, op) for coef, op in self.terms]
+            return Hamiltonian(scaled_terms)
+        return NotImplemented
+    
+    def __repr__(self):
+        """返回哈密顿量的字符串表示"""
+        if not self.terms:
+            return "Hamiltonian()"
+        
+        terms_str = []
+        for coef, op in self.terms:
+            if coef == 1.0:
+                terms_str.append(repr(op))
+            elif coef == -1.0:
+                terms_str.append(f"-{repr(op)}")
+            else:
+                terms_str.append(f"{coef} * {repr(op)}")
+        
+        return "Hamiltonian(" + " + ".join(terms_str) + ")"
+
+
+class SpinNamespace:
+    """自旋算符命名空间，提供创建各种自旋算符的方法"""
+    
+    def i(self, qubit):
+        """创建单位算符"""
+        return SpinOperator('i', qubit)
+    
+    def x(self, qubit):
+        """创建X自旋算符"""
+        return SpinOperator('x', qubit)
+    
+    def y(self, qubit):
+        """创建Y自旋算符"""
+        return SpinOperator('y', qubit)
+
+    def z(self, qubit):
+        """创建Z自旋算符"""
+        return SpinOperator('z', qubit)
+
+
+# 创建spin命名空间实例
+spin = SpinNamespace()
+
+
+class ExpectationResult:
+    """期望值结果类"""
+    
+    def __init__(self, value: float):
+        self.value = value
+    
+    def expectation(self):
+        """返回期望值"""
+        return self.value
+    
+    def __repr__(self):
+        return f"ExpectationResult(value={self.value})"
+
+
+class ObserveProgram:
+    """观察程序类，用于处理量子态的观察操作"""
+    
+    def __init__(self, program: QuantumProgram, hamiltonian: Hamiltonian):
+        self.program = program
+        self.hamiltonian = hamiltonian
+    
+    def get_hamiltonian_terms(self):
+        """获取哈密顿量的项，转换为C++后端可用的格式"""
+        terms = []
+        
+        for coef, op in self.hamiltonian.terms:
+            if isinstance(op, SpinOperator):
+                # 单个自旋算符
+                qubit_idx = op.qubit.index if isinstance(op.qubit, Qubit) else op.qubit
+                terms.append((coef, [(op.op_type, qubit_idx)]))
+            elif isinstance(op, ProductOperator):
+                # 乘积算符
+                product_ops = []
+                for spin_op in op.operators:
+                    qubit_idx = spin_op.qubit.index if isinstance(spin_op.qubit, Qubit) else spin_op.qubit
+                    product_ops.append((spin_op.op_type, qubit_idx))
+                terms.append((coef, product_ops))
+        
+        return terms
+
+
+def observe(program: QuantumProgram, hamiltonian: Hamiltonian, *args, **kwargs) -> ExpectationResult:
+    """观察量子程序的哈密顿量期望值"""
+    
+    target = kwargs.get('target', get_target())
+    
+    # 创建观察程序实例
+    observe_program = ObserveProgram(program, hamiltonian)
+    
+    # 获取模拟器实例
+    simulator = _backend_manager.get_simulator(target)
+    
+    # 生成SSA汇编代码，传递args作为prog的参数
+    ssa_assembly = program.generate_ssa_assembly(*args, **kwargs)
+    
+    # 加载SSA汇编代码到模拟器
+    load_result = simulator.load_ssa_assembly(ssa_assembly)
+    if not load_result:
+        raise RuntimeError(f"Failed to load SSA assembly: {simulator.get_error()}")
+    
+    # 运行模拟器，执行量子电路并准备量子态
+    run_result = simulator.run()
+    if not run_result:
+        raise RuntimeError(f"Failed to run simulation: {simulator.get_error()}")
+    
+    # 获取哈密顿量项，转换为C++兼容格式
+    hamiltonian_terms = observe_program.get_hamiltonian_terms()
+    
+    # 调用expect方法计算期望值
+    expectation = simulator.expect(hamiltonian_terms)
+    
+    return ExpectationResult(expectation)

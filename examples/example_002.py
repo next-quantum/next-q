@@ -4,7 +4,10 @@ import os
 # Add the root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from quantum_framework import quantum_kernel, qvector, h, x, mz, sample
+from quantum_framework import quantum_kernel, qvector, h, x, mz, sample, set_target
+
+set_target('default-cpu-sv')
+# set_target('biren-gpu-sv') 
 
 @quantum_kernel
 def ghz(num_qubits: int):
