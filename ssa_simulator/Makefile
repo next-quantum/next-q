@@ -83,6 +83,15 @@ BIREN_CC ?= brcc
 BIREN_FLAGS = -std=c++17 -O3 -fPIC -x supa
 BIREN_LINK_FLAGS = --supa-link -O2
 
+# 自动检测BR110芯片
+ifeq ($(BIREN_SUPPORT), 1)
+    BIREN_GPU_NAME := $(shell brsmi gpu --query-gpu=name --format=csv,noheader 2>/dev/null)
+    ifneq ($(findstring 110,$(BIREN_GPU_NAME)),)
+        BIREN_FLAGS += --supa-gpu-arch=br110
+        BIREN_LINK_FLAGS += --supa-gpu-arch=br110
+    endif
+endif
+
 # 完整版本：包含所有必要的源文件，使用真正的qc_runtime_v2
 CPP_SRCS = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
 
@@ -163,8 +172,10 @@ endif
 # ssa_simulation_runner 目标
 ifeq ($(BIREN_SUPPORT), 1)
 # 使用 brcc 和 --supa-link 进行链接
-ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpp $(BIN_OBJS)
-	$(BIREN_CC) $(BIREN_LINK_FLAGS) $(CXXFLAGS) $(INCLUDES) ssa_simulation_runner.cpp $(BIN_OBJS) $(LIBS) -o $@
+ssa_simulation_runner.o: ssa_simulation_runner.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.o $(BIN_OBJS)
+	$(BIREN_CC) $(BIREN_LINK_FLAGS) ssa_simulation_runner.o $(BIN_OBJS) $(LIBS) -o $@
 else
 # 使用默认编译器进行链接
 ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpp $(BIN_OBJS)
@@ -173,7 +184,7 @@ endif
 
 # 清理规则
 clean:
-	$(RM) $(CPP_OBJS) $(SU_OBJS) $(TARGET) $(BIN_OBJS) ssa_simulation_runner$(EXE_EXT)
+	$(RM) $(CPP_OBJS) $(SU_OBJS) $(TARGET) $(BIN_OBJS) ssa_simulation_runner.o ssa_simulation_runner$(EXE_EXT)
 
 # 测试规则
 test:
@@ -188,6 +199,8 @@ show:
 	@echo "CXXFLAGS: $(CXXFLAGS)"
 	@echo "BIREN_SUPPORT: $(BIREN_SUPPORT)"
 	@echo "BIREN_CC: $(BIREN_CC)"
+	@echo "BIREN_FLAGS: $(BIREN_FLAGS)"
+	@echo "BIREN_LINK_FLAGS: $(BIREN_LINK_FLAGS)"
 	@echo "PYTHON: $(PYTHON)"
 	@echo "PYTHON_INCLUDE: $(PYTHON_INCLUDE)"
 	@echo "PYBIND11_INCLUDE: $(PYBIND11_INCLUDE)"
