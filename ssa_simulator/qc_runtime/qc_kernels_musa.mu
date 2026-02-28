@@ -5,7 +5,7 @@
 #include "mu_complex.muh"
 
 namespace QC_V2 {
-namespace MOORETHREAD_GPU {
+namespace MTHREADS_GPU {
 
 __device__ inline uint32_t nth_cleared(uint32_t const index, uint32_t const target_power) {
   uint32_t const mask = target_power - 1;

@@ -39,10 +39,10 @@ else
 endif
 
 # 摩尔线程GPU支持
-ifdef enable-moorethread
-    MOORETHREAD_SUPPORT := 1
+ifdef enable-mthreads
+    MTHREADS_SUPPORT := 1
 else
-    MOORETHREAD_SUPPORT := 0
+    MTHREADS_SUPPORT := 0
 endif
 
 # 基础编译选项
@@ -50,7 +50,7 @@ CXXFLAGS = -std=c++17 -O3 -Wall -fPIC
 ifeq ($(BIREN_SUPPORT), 1)
     CXXFLAGS += -DENABLE_BIREN
 endif
-ifeq ($(MOORETHREAD_SUPPORT), 1)
+ifeq ($(MTHREADS_SUPPORT), 1)
     CXXFLAGS += -DENABLE_MOORETHREAD
 endif
 
@@ -98,13 +98,13 @@ BIREN_FLAGS = -std=c++17 -O3 -fPIC -x supa
 BIREN_LINK_FLAGS = --supa-link -O2
 
 # 摩尔线程GPU编译设置
-MOORETHREAD_CC ?= mcc
+MTHREADS_CC ?= mcc
 # 从mcc命令自动获取MUSA安装路径
-MUSA_PATH = $(shell $(MOORETHREAD_CC) -v -x c++ -c /dev/null 2>&1 | grep "Found MUSA installation:" | awk '{print $$4}' | sed 's/,//')
+MUSA_PATH = $(shell $(MTHREADS_CC) -v -x c++ -c /dev/null 2>&1 | grep "Found MUSA installation:" | awk '{print $$4}' | sed 's/,//')
 # 构造MUSA include目录路径
-MOORETHREAD_INCLUDE = $(MUSA_PATH)/include
-MOORETHREAD_FLAGS = -std=c++17 -O3 -fPIC -x musa
-MOORETHREAD_LINK_FLAGS = -O2
+MTHREADS_INCLUDE = $(MUSA_PATH)/include
+MTHREADS_FLAGS = -std=c++17 -O3 -fPIC -x musa
+MTHREADS_LINK_FLAGS = -O2
 
 # 自动检测BR110芯片
 ifeq ($(BIREN_SUPPORT), 1)
@@ -121,7 +121,7 @@ PY_SUFFIX := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_
 # 目标文件定义
 TARGET_CPU = ssa_simulator_cpp_default_cpu_sv$(PY_SUFFIX)
 TARGET_BIREN_GPU = ssa_simulator_cpp_biren_gpu_sv$(PY_SUFFIX)
-TARGET_MOORETHREAD_GPU = ssa_simulator_cpp_moorethread_gpu_sv$(PY_SUFFIX)
+TARGET_MTHREADS_GPU = ssa_simulator_cpp_mthreads_gpu_sv$(PY_SUFFIX)
 
 # 完整版本：包含所有必要的源文件，使用真正的qc_runtime_v2
 # CPU后端源文件
@@ -132,26 +132,26 @@ CPP_SRCS_BIREN_GPU = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_r
 SU_SRCS_BIREN_GPU = qc_runtime/qc_simulator_biren_gpu_sv_v2.su qc_runtime/supa_utils.su qc_runtime/qc_kernels_supa.su
 
 # 摩尔线程GPU后端源文件
-CPP_SRCS_MOORETHREAD_GPU = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
-MU_SRCS_MOORETHREAD_GPU = qc_runtime/qc_simulator_moorethread_gpu_sv_v2.mu qc_runtime/musa_utils.mu qc_runtime/qc_kernels_musa.mu
+CPP_SRCS_MTHREADS_GPU = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
+MU_SRCS_MTHREADS_GPU = qc_runtime/qc_simulator_mthreads_gpu_sv_v2.mu qc_runtime/musa_utils.mu qc_runtime/qc_kernels_musa.mu
 
 # 目标文件
 CPP_OBJS_CPU = $(CPP_SRCS_CPU:.cpp=.cpu.o)
 CPP_OBJS_BIREN_GPU = $(CPP_SRCS_BIREN_GPU:.cpp=.biren_gpu.o)
 SU_OBJS_BIREN_GPU = $(SU_SRCS_BIREN_GPU:.su=.biren_gpu.o)
-CPP_OBJS_MOORETHREAD_GPU = $(CPP_SRCS_MOORETHREAD_GPU:.cpp=.moorethread_gpu.o)
-MU_OBJS_MOORETHREAD_GPU = $(MU_SRCS_MOORETHREAD_GPU:.mu=.moorethread_gpu.o)
+CPP_OBJS_MTHREADS_GPU = $(CPP_SRCS_MTHREADS_GPU:.cpp=.mthreads_gpu.o)
+MU_OBJS_MTHREADS_GPU = $(MU_SRCS_MTHREADS_GPU:.mu=.mthreads_gpu.o)
 OBJS_CPU = $(CPP_OBJS_CPU)
 OBJS_BIREN_GPU = $(CPP_OBJS_BIREN_GPU) $(SU_OBJS_BIREN_GPU)
-OBJS_MOORETHREAD_GPU = $(CPP_OBJS_MOORETHREAD_GPU) $(MU_OBJS_MOORETHREAD_GPU)
+OBJS_MTHREADS_GPU = $(CPP_OBJS_MTHREADS_GPU) $(MU_OBJS_MTHREADS_GPU)
 
 # 头文件包含路径
 INCLUDES = -I$(PYTHON_INCLUDE) -I$(PYBIND11_INCLUDE) -I.
 ifeq ($(BIREN_SUPPORT), 1)
     INCLUDES += -I$(BIREN_INCLUDE)
 endif
-ifeq ($(MOORETHREAD_SUPPORT), 1)
-    INCLUDES += -I$(MOORETHREAD_INCLUDE)
+ifeq ($(MTHREADS_SUPPORT), 1)
+    INCLUDES += -I$(MTHREADS_INCLUDE)
 endif
 
 # 链接库路径
@@ -159,12 +159,12 @@ ifeq ($(OS_TYPE),macOS)
     # macOS 特殊处理：使用 -undefined dynamic_lookup 而不是显式链接 Python 库
     LIBS = 
     BIREN_LIBS = $(LIBS)
-    MOORETHREAD_LIBS = $(LIBS) -lmusart
+    MTHREADS_LIBS = $(LIBS) -lmusart
 else
     # Linux/Windows 使用常规链接方式
     LIBS = $(if $(PYTHON_LIB),-L$(PYTHON_LIB),) $(PYTHON_LD) $(PYTHON_LDFLAGS)
     BIREN_LIBS = $(LIBS)
-    MOORETHREAD_LIBS = $(LIBS) -lmusart
+    MTHREADS_LIBS = $(LIBS) -lmusart
 endif
 
 # 默认目标
@@ -176,8 +176,8 @@ all: $(TARGET_BIREN_GPU)
 endif
 
 # 构建摩尔线程GPU后端（如果启用）
-ifeq ($(MOORETHREAD_SUPPORT), 1)
-all: $(TARGET_MOORETHREAD_GPU)
+ifeq ($(MTHREADS_SUPPORT), 1)
+all: $(TARGET_MTHREADS_GPU)
 endif
 
 # 调试模式目标
@@ -191,10 +191,10 @@ debug: all
 qc_runtime/%.biren_gpu.o: qc_runtime/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-%.moorethread_gpu.o: %.cpp
+%.mthreads_gpu.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-qc_runtime/%.moorethread_gpu.o: qc_runtime/%.cpp
+qc_runtime/%.mthreads_gpu.o: qc_runtime/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # SU文件编译规则（壁仞GPU）- 仅当启用壁仞支持时，用 brcc 编译
@@ -204,9 +204,9 @@ qc_runtime/%.biren_gpu.o: qc_runtime/%.su
 endif
 
 # MU文件编译规则（摩尔线程GPU）- 仅当启用摩尔线程支持时，用 mcc 编译
-ifeq ($(MOORETHREAD_SUPPORT), 1)
-qc_runtime/%.moorethread_gpu.o: qc_runtime/%.mu
-	$(MOORETHREAD_CC) $(MOORETHREAD_FLAGS) $(INCLUDES) -c $< -o $@
+ifeq ($(MTHREADS_SUPPORT), 1)
+qc_runtime/%.mthreads_gpu.o: qc_runtime/%.mu
+	$(MTHREADS_CC) $(MTHREADS_FLAGS) $(INCLUDES) -c $< -o $@
 endif
 
 # 编译规则 - CPU后端（不启用BIREN）
@@ -235,12 +235,12 @@ endif
 endif
 
 # 链接规则 - 摩尔线程GPU后端（仅当启用摩尔线程支持时）
-ifeq ($(MOORETHREAD_SUPPORT), 1)
-$(TARGET_MOORETHREAD_GPU): $(OBJS_MOORETHREAD_GPU)
+ifeq ($(MTHREADS_SUPPORT), 1)
+$(TARGET_MTHREADS_GPU): $(OBJS_MTHREADS_GPU)
 ifeq ($(OS_TYPE),macOS)
-	$(MOORETHREAD_CC) $(MOORETHREAD_LINK_FLAGS) -shared $(OBJS_MOORETHREAD_GPU) $(MOORETHREAD_LIBS) -undefined dynamic_lookup -o $(TARGET_MOORETHREAD_GPU)
+	$(MTHREADS_CC) $(MTHREADS_LINK_FLAGS) -shared $(OBJS_MTHREADS_GPU) $(MTHREADS_LIBS) -undefined dynamic_lookup -o $(TARGET_MTHREADS_GPU)
 else
-	$(MOORETHREAD_CC) $(MOORETHREAD_LINK_FLAGS) -shared $(OBJS_MOORETHREAD_GPU) $(MOORETHREAD_LIBS) -o $(TARGET_MOORETHREAD_GPU)
+	$(MTHREADS_CC) $(MTHREADS_LINK_FLAGS) -shared $(OBJS_MTHREADS_GPU) $(MTHREADS_LIBS) -o $(TARGET_MTHREADS_GPU)
 endif
 endif
 
@@ -258,7 +258,7 @@ ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpu.o $(BIN_OBJS)
 
 # 清理规则
 clean:
-	$(RM) *.cpu.o *.biren_gpu.o *.moorethread_gpu.o qc_runtime/*.cpu.o qc_runtime/*.biren_gpu.o qc_runtime/*.moorethread_gpu.o $(SU_OBJS_BIREN_GPU) $(MU_OBJS_MOORETHREAD_GPU) $(TARGET_CPU) $(TARGET_BIREN_GPU) $(TARGET_MOORETHREAD_GPU) $(BIN_OBJS) ssa_simulation_runner.cpu.o ssa_simulation_runner$(EXE_EXT)
+	$(RM) *.cpu.o *.biren_gpu.o *.mthreads_gpu.o qc_runtime/*.cpu.o qc_runtime/*.biren_gpu.o qc_runtime/*.mthreads_gpu.o $(SU_OBJS_BIREN_GPU) $(MU_OBJS_MTHREADS_GPU) $(TARGET_CPU) $(TARGET_BIREN_GPU) $(TARGET_MTHREADS_GPU) $(BIN_OBJS) ssa_simulation_runner.cpu.o ssa_simulation_runner$(EXE_EXT)
 
 # 测试规则
 test:
@@ -268,9 +268,9 @@ ifeq ($(BIREN_SUPPORT), 1)
 	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); import ssa_simulator_cpp_biren_gpu_sv; print('Biren GPU module imported successfully!')"
 	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); from ssa_simulator_cpp_biren_gpu_sv import BirenGPUSVSSASimulator; sim = BirenGPUSVSSASimulator(); print('Biren GPU SSASimulator created successfully!')"
 endif
-ifeq ($(MOORETHREAD_SUPPORT), 1)
-	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); import ssa_simulator_cpp_moorethread_gpu_sv; print('Moore Thread GPU module imported successfully!')"
-	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); from ssa_simulator_cpp_moorethread_gpu_sv import MooreThreadGPUSVSSASimulator; sim = MooreThreadGPUSVSSASimulator(); print('Moore Thread GPU SSASimulator created successfully!')"
+ifeq ($(MTHREADS_SUPPORT), 1)
+	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); import ssa_simulator_cpp_mthreads_gpu_sv; print('Moore Thread GPU module imported successfully!')"
+	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); from ssa_simulator_cpp_mthreads_gpu_sv import MooreThreadGPUSVSSASimulator; sim = MooreThreadGPUSVSSASimulator(); print('Moore Thread GPU SSASimulator created successfully!')"
 endif
 
 # 显示变量
@@ -284,24 +284,24 @@ show:
 	@echo "BIREN_FLAGS: $(BIREN_FLAGS)"
 	@echo "BIREN_LINK_FLAGS: $(BIREN_LINK_FLAGS)"
 	@echo "BIREN_LIBS: $(BIREN_LIBS)"
-	@echo "MOORETHREAD_SUPPORT: $(MOORETHREAD_SUPPORT)"
-	@echo "MOORETHREAD_CC: $(MOORETHREAD_CC)"
+	@echo "MTHREADS_SUPPORT: $(MTHREADS_SUPPORT)"
+	@echo "MTHREADS_CC: $(MTHREADS_CC)"
 	@echo "MUSA_PATH: $(MUSA_PATH)"
-	@echo "MOORETHREAD_INCLUDE: $(MOORETHREAD_INCLUDE)"
-	@echo "MOORETHREAD_FLAGS: $(MOORETHREAD_FLAGS)"
-	@echo "MOORETHREAD_LINK_FLAGS: $(MOORETHREAD_LINK_FLAGS)"
-	@echo "MOORETHREAD_LIBS: $(MOORETHREAD_LIBS)"
+	@echo "MTHREADS_INCLUDE: $(MTHREADS_INCLUDE)"
+	@echo "MTHREADS_FLAGS: $(MTHREADS_FLAGS)"
+	@echo "MTHREADS_LINK_FLAGS: $(MTHREADS_LINK_FLAGS)"
+	@echo "MTHREADS_LIBS: $(MTHREADS_LIBS)"
 	@echo "PYTHON: $(PYTHON)"
 	@echo "PYTHON_INCLUDE: $(PYTHON_INCLUDE)"
 	@echo "PYBIND11_INCLUDE: $(PYBIND11_INCLUDE)"
 	@echo "TARGET_CPU: $(TARGET_CPU)"
 	@echo "TARGET_BIREN_GPU: $(TARGET_BIREN_GPU)"
-	@echo "TARGET_MOORETHREAD_GPU: $(TARGET_MOORETHREAD_GPU)"
+	@echo "TARGET_MTHREADS_GPU: $(TARGET_MTHREADS_GPU)"
 	@echo "CPP_SRCS_CPU: $(CPP_SRCS_CPU)"
 	@echo "CPP_SRCS_BIREN_GPU: $(CPP_SRCS_BIREN_GPU)"
 	@echo "SU_SRCS_BIREN_GPU: $(SU_SRCS_BIREN_GPU)"
-	@echo "CPP_SRCS_MOORETHREAD_GPU: $(CPP_SRCS_MOORETHREAD_GPU)"
-	@echo "MU_SRCS_MOORETHREAD_GPU: $(MU_SRCS_MOORETHREAD_GPU)"
+	@echo "CPP_SRCS_MTHREADS_GPU: $(CPP_SRCS_MTHREADS_GPU)"
+	@echo "MU_SRCS_MTHREADS_GPU: $(MU_SRCS_MTHREADS_GPU)"
 	@echo "OBJS_CPU: $(OBJS_CPU)"
 	@echo "OBJS_BIREN_GPU: $(OBJS_BIREN_GPU)"
-	@echo "OBJS_MOORETHREAD_GPU: $(OBJS_MOORETHREAD_GPU)"
+	@echo "OBJS_MTHREADS_GPU: $(OBJS_MTHREADS_GPU)"

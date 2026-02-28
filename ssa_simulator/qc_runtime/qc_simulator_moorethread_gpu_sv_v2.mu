@@ -6,7 +6,7 @@
 #include <musa_runtime.h>
 
 #include "musa_utils.hpp"
-#include "qc_simulator_moorethread_gpu_sv_v2.hpp"
+#include "qc_simulator_mthreads_gpu_sv_v2.hpp"
 #include "qc_kernels_musa.muh"
 
 namespace QC_V2 {
@@ -65,22 +65,22 @@ SimulatorMooreThreadGPUSVV2::SimulatorMooreThreadGPUSVV2(std::uint64_t nQubits_)
   }
 
   // kernel function attributes
-  if (!setKernelFunctionAttributes(_mApplyGateOneFunctionAttrs, "apply_gate_one", (void*)MOORETHREAD_GPU::apply_gate_one)) {
+  if (!setKernelFunctionAttributes(_mApplyGateOneFunctionAttrs, "apply_gate_one", (void*)MTHREADS_GPU::apply_gate_one)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mApplyGateOneFunctionAttrs");
   }
-  if (!setKernelFunctionAttributes(_mFindProbabilityOfOutcomeZeroFunctionAttrs, "find_probability_of_outcome_zero", (void*)MOORETHREAD_GPU::find_probability_of_outcome_zero)) {
+  if (!setKernelFunctionAttributes(_mFindProbabilityOfOutcomeZeroFunctionAttrs, "find_probability_of_outcome_zero", (void*)MTHREADS_GPU::find_probability_of_outcome_zero)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mFindProbabilityOfOutcomeZeroFunctionAttrs");
   }
-  if (!setKernelFunctionAttributes(_mCollapseToOutcomeScaleFunctionAttrs, "collapse_to_outcome_scale", (void*)MOORETHREAD_GPU::collapse_to_outcome_scale)) {
+  if (!setKernelFunctionAttributes(_mCollapseToOutcomeScaleFunctionAttrs, "collapse_to_outcome_scale", (void*)MTHREADS_GPU::collapse_to_outcome_scale)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mCollapseToOutcomeScaleFunctionAttrs");
   }
-  if (!setKernelFunctionAttributes(_mStoreStateVectorFunctionAttrs, "store_state_vector", (void*)MOORETHREAD_GPU::store_state_vector)) {
+  if (!setKernelFunctionAttributes(_mStoreStateVectorFunctionAttrs, "store_state_vector", (void*)MTHREADS_GPU::store_state_vector)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mStoreStateVectorFunctionAttrs");
   }
-  if (!setKernelFunctionAttributes(_mDotStateVectorFunctionAttrs, "dot_state_vector", (void*)MOORETHREAD_GPU::dot_state_vector)) {
+  if (!setKernelFunctionAttributes(_mDotStateVectorFunctionAttrs, "dot_state_vector", (void*)MTHREADS_GPU::dot_state_vector)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mDotStateVectorFunctionAttrs");
   }
-  if (!setKernelFunctionAttributes(_mNormStateVectorFunctionAttrs, "norm_state_vector", (void*)MOORETHREAD_GPU::norm_state_vector)) {
+  if (!setKernelFunctionAttributes(_mNormStateVectorFunctionAttrs, "norm_state_vector", (void*)MTHREADS_GPU::norm_state_vector)) {
     throw std::runtime_error("[SimulatorMooreThreadGPUSVV2] failed to set kernel function attributes for _mNormStateVectorFunctionAttrs");
   }
 
@@ -130,7 +130,7 @@ void SimulatorMooreThreadGPUSVV2::applyGateOne(
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::apply_gate_one<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::apply_gate_one<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVector,
     m00, m01, m10, m11,
     target, controlMask
@@ -161,7 +161,7 @@ RealType SimulatorMooreThreadGPUSVV2::findProbabilityOfOutcome(std::uint64_t tar
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::find_probability_of_outcome_zero<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::find_probability_of_outcome_zero<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVector,
     _mDeviceOutput,
     target
@@ -198,7 +198,7 @@ void SimulatorMooreThreadGPUSVV2::collapseToOutcome(std::uint64_t target, RealTy
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::collapse_to_outcome_scale<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::collapse_to_outcome_scale<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVector,
     target,
     (float)normFactor,
@@ -227,7 +227,7 @@ void SimulatorMooreThreadGPUSVV2::store() {
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::store_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::store_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVectorBuffer,
     _mDeviceStateVector
   );
@@ -261,7 +261,7 @@ RealType SimulatorMooreThreadGPUSVV2::dot() const {
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::dot_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::dot_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVector,
     _mDeviceStateVectorBuffer,
     _mDeviceOutput
@@ -351,7 +351,7 @@ RealType SimulatorMooreThreadGPUSVV2::norm() const {
 
   musaEventRecord(_mEventStart);
 
-  MOORETHREAD_GPU::norm_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
+  MTHREADS_GPU::norm_state_vector<<<blocksPerGrid, threadsPerBlock>>>(
     _mDeviceStateVector,
     _mDeviceOutput
   );

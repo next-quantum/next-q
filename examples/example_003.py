@@ -10,7 +10,7 @@ from quantum_framework import quantum_kernel, qubit, qvector, h, x, t, mz, swap,
 
 set_target('default-cpu-sv')
 # set_target('biren-gpu-sv') 
-# set_target('moore-threads-gpu-sv') 
+# set_target('mthreads-gpu-sv') 
 
 @quantum_kernel
 def iqft(qubits: qvector):

@@ -71,8 +71,8 @@ make clean enable-biren=1 # 清理编译产物
 
 ```bash
 cd ssa_simulator
-make -j enable-moorethread=1  # 编译摩尔线程GPU后端
-make clean enable-moorethread=1 # 清理编译产物
+make -j enable-mthreads=1  # 编译摩尔线程GPU后端
+make clean enable-mthreads=1 # 清理编译产物
 ```
 
 编译产物包括 Python 扩展模块和独立的 SSA 模拟执行器。
@@ -138,7 +138,7 @@ NEXT-Q框架支持多种计算后端，为量子算法的执行提供灵活的�
 - **大规模模拟**：支持更大规模的量子电路模拟，加速算法开发和验证
 - **国产硬件支持**：为国产GPU提供量子计算应用场景
 
-### 3. moore-threads-gpu-sv（摩尔线程GPU向量态模拟器）
+### 3. mthreads-gpu-sv（摩尔线程GPU向量态模拟器）
 - **高性能计算后端**：利用摩尔线程GPU的并行计算能力
 - **硬件加速**：针对摩尔线程GPU架构优化，提供显著的性能提升
 - **大规模模拟**：支持更大规模的量子电路模拟，加速算法开发和验证
@@ -158,7 +158,7 @@ set_target('default-cpu-sv')
 set_target('biren-gpu-sv')
 
 # 或者，使用摩尔线程GPU后端
-set_target('moore-threads-gpu-sv')
+set_target('mthreads-gpu-sv')
 ```
 
 注意：使用GPU后端前，需要先编译对应的GPU后端。
@@ -199,7 +199,7 @@ cd ..
 ```bash
 # 编译摩尔线程GPU后端
 cd ssa_simulator
-make -j enable-moorethread=1
+make -j enable-mthreads=1
 cd ..
 ```
 
@@ -215,7 +215,7 @@ make  # 仅CPU后端
 # 或
 make -j enable-biren=1  # 启用壁仞GPU后端
 # 或
-make -j enable-moorethread=1  # 启用摩尔线程GPU后端
+make -j enable-mthreads=1  # 启用摩尔线程GPU后端
 cd ..
 ```
 
@@ -227,7 +227,7 @@ from quantum_framework import quantum_kernel, qvector, h, x, mz, sample, set_tar
 # 选择计算后端（根据硬件环境选择）
 set_target('default-cpu-sv')  # 使用CPU后端（默认）
 # set_target('biren-gpu-sv')     # 或使用壁仞GPU后端
-# set_target('moore-threads-gpu-sv')  # 或使用摩尔线程GPU后端
+# set_target('mthreads-gpu-sv')  # 或使用摩尔线程GPU后端
 
 @quantum_kernel
 def my_quantum_program():

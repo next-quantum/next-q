@@ -7,7 +7,7 @@
 #include "mu_complex.muh"
 
 namespace QC_V2 {
-namespace MOORETHREAD_GPU {
+namespace MTHREADS_GPU {
 
 __global__ void apply_gate_one(
   muFloatComplex* stateVector,

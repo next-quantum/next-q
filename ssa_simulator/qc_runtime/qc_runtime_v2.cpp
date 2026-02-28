@@ -7,7 +7,7 @@
 #endif
 
 #ifdef ENABLE_MOORETHREAD
-#include "qc_simulator_moorethread_gpu_sv_v2.hpp"
+#include "qc_simulator_mthreads_gpu_sv_v2.hpp"
 #endif
 
 #include <cassert>

@@ -2382,7 +2382,7 @@ class BackendTarget(enum.Enum):
     AMD_GPU_SV = 'amd-gpu-sv'
     BIREN_GPU_SV = 'biren-gpu-sv'
     METAX_GPU_SV = 'metax-gpu-sv'
-    MOORE_THREADS_GPU_SV = 'moore-threads-gpu-sv'
+    MOORE_THREADS_GPU_SV = 'mthreads-gpu-sv'
     ILUVATAR_GPU_SV = 'iluvatar-gpu-sv'
     APPLE_GPU_SV = 'apple-gpu-sv'
     OPENCL_SV = 'opencl-sv'
@@ -2482,7 +2482,7 @@ class BackendManager:
                     self._simulators[target] = self._default_simulator
             return self._simulators[target]
         
-        # moore-threads-gpu-sv 后端
+        # mthreads-gpu-sv 后端
         if target == BackendTarget.MOORE_THREADS_GPU_SV.value:
             if target not in self._simulators:
                 print(f"[BackendManager] Initializing Moore Threads GPU SV backend")
@@ -2490,7 +2490,7 @@ class BackendManager:
                     # 直接尝试使用GPU后端，不导入CPU模块
                     import importlib
                     # 动态导入GPU模块
-                    gpu_module = importlib.import_module('ssa_simulator_cpp_moorethread_gpu_sv')
+                    gpu_module = importlib.import_module('ssa_simulator_cpp_mthreads_gpu_sv')
                     simulator = gpu_module.MooreThreadGPUSVSSASimulator()
                     
                     # 测试模拟器是否能正常工作

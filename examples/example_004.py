@@ -14,7 +14,7 @@ from quantum_framework import quantum_kernel, qubit, qvector, h, x, mx, my, mz, 
 
 set_target('default-cpu-sv')
 # set_target('biren-gpu-sv')
-# set_target('moore-threads-gpu-sv') 
+# set_target('mthreads-gpu-sv') 
 
 # We'll use the graph below to illustrate how QAOA can be used to
 # solve a max cut problem

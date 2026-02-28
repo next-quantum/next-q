@@ -190,7 +190,7 @@ private:
 };
 
 // 模块初始化
-PYBIND11_MODULE(ssa_simulator_cpp_moorethread_gpu_sv, m) {
+PYBIND11_MODULE(ssa_simulator_cpp_mthreads_gpu_sv, m) {
     py::class_<MooreThreadGPUSVSSASimulatorPython>(m, "MooreThreadGPUSVSSASimulator")
         .def(py::init<>())
         .def("load_ssa_assembly", &MooreThreadGPUSVSSASimulatorPython::load_ssa_assembly)
