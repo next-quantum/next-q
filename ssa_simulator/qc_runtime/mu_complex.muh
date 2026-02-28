@@ -1,0 +1,23 @@
+#pragma once
+
+#include <iostream>
+#include <cmath>
+
+#include <muComplex.h>
+
+// __host__ __device__ inline muFloatComplex operator*(muFloatComplex const& c, float const s) {
+//   auto r = c;
+//   r.x *= s;
+//   r.y *= s;
+
+//   return r;
+// }
+
+// __host__ __device__ inline float muFloatComplexNorm(muFloatComplex const& c) {
+//   return c.x * c.x + c.y * c.y;
+// }
+
+__host__ inline std::ostream& operator<<(std::ostream& os, muFloatComplex const& c) {
+  os << "(" << c.x << ", " << c.y << ")";
+  return os;
+}

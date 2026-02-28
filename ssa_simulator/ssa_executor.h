@@ -96,16 +96,10 @@ public:
         ExecutionContext& context) = 0;
 };
 
-// 后端类型枚举
-enum class BackendType {
-    CPU,
-    BirenGPU
-};
-
 // SSA执行引擎类
 class SSAExecutor {
 public:
-    SSAExecutor(BackendType backend = BackendType::CPU);
+    SSAExecutor();
     ~SSAExecutor();
     
     // 设置量子门处理器

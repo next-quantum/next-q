@@ -6,6 +6,10 @@
 #include "qc_simulator_biren_gpu_sv_v2.hpp"
 #endif
 
+#ifdef ENABLE_MOORETHREAD
+#include "qc_simulator_moorethread_gpu_sv_v2.hpp"
+#endif
+
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -26,9 +30,6 @@ std::string string_format( const std::string& format, Args ... args ) {
   snprintf( buf.get(), size, format.c_str(), args ... );
   return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
 }
-
-// Current backend type
-static enum BackendTypeV2 current_backend = BackendCPU;
 
 // A unique pointer to simulator object
 std::unique_ptr<SimulatorV2> simulator = nullptr;
@@ -59,51 +60,25 @@ static inline Term convertArrayToTerm(std::uint64_t const n, PauliV2 const b[], 
 } // namespace QC_V2
 
 // Implementations of external interfaces
-void setBackend_v2(enum BackendTypeV2 backend) {
-  // check backend availability
-  switch (backend) {
-  case BackendCPU:
-    // [BUG 2026.2.16 12:26] forget break
-    break;
-  case BackendBirenGPU:
-    #ifdef ENABLE_BIREN
-    break;
-    #else
-    throw std::runtime_error("Biren GPU backend is not supported yet");
-    break;
-    #endif
-  default:
-    throw std::runtime_error("Unknown backend type");
-    break;
-  }
-
-  QC_V2::current_backend = backend;
-  // Add backend-specific initialization here if needed
-}
-
 void initWithQubitSize_v2(unsigned int qubit_size) {
   assert(QC_V2::simulator == nullptr);
 
-  switch (QC_V2::current_backend) {
-  case BackendCPU:
-    QC_V2::simulator = std::make_unique<QC_V2::SimulatorDefaultCPUSVV2>(
-      static_cast<std::uint64_t>(qubit_size)
-    );
-    break;
-  case BackendBirenGPU:
-    #ifdef ENABLE_BIREN
-    QC_V2::simulator = std::make_unique<QC_V2::SimulatorBirenGPUSVV2>(
-      static_cast<std::uint64_t>(qubit_size)
-    );
-    break;
-    #else
-    throw std::runtime_error("Biren GPU backend is not supported yet");
-    break;
-    #endif
-  default:
-    throw std::runtime_error("Unknown backend type");
-    break;
-  }
+  #ifdef ENABLE_MOORETHREAD
+  // Use Moore Thread GPU backend when enabled
+  QC_V2::simulator = std::make_unique<QC_V2::SimulatorMooreThreadGPUSVV2>(
+    static_cast<std::uint64_t>(qubit_size)
+  );
+  #elif ENABLE_BIREN
+  // Use Biren GPU backend when enabled
+  QC_V2::simulator = std::make_unique<QC_V2::SimulatorBirenGPUSVV2>(
+    static_cast<std::uint64_t>(qubit_size)
+  );
+  #else
+  // Use CPU backend by default
+  QC_V2::simulator = std::make_unique<QC_V2::SimulatorDefaultCPUSVV2>(
+    static_cast<std::uint64_t>(qubit_size)
+  );
+  #endif
 
   assert(QC_V2::simulator != nullptr);
 }

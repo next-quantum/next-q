@@ -1,0 +1,55 @@
+#pragma once
+
+#include <cstdint>
+
+#include <device_types.h>
+
+#include "mu_complex.muh"
+
+namespace QC_V2 {
+namespace MOORETHREAD_GPU {
+
+__global__ void apply_gate_one(
+  muFloatComplex* stateVector,
+
+  muFloatComplex const m00,
+  muFloatComplex const m01,
+  muFloatComplex const m10,
+  muFloatComplex const m11,
+  
+  uint32_t const target,
+  uint32_t const controlMask
+);
+
+__global__ void find_probability_of_outcome_zero(
+  muFloatComplex* stateVector,
+  float* output,
+  uint32_t const target
+);
+
+__global__ void collapse_to_outcome_scale(
+  muFloatComplex* stateVector,
+  uint32_t const target,
+  float const scale,
+  bool const one,
+  bool const noNorm
+);
+
+__global__ void store_state_vector(
+  muFloatComplex* stateVectorBuffer,
+  muFloatComplex const* stateVector
+);
+
+__global__ void dot_state_vector(
+  muFloatComplex const* stateVector,
+  muFloatComplex const* stateVectorBuffer,
+  float* output
+);
+
+__global__ void norm_state_vector(
+  muFloatComplex const* stateVector,
+  float* output
+);
+
+}
+}

@@ -8,6 +8,7 @@ from quantum_framework import quantum_kernel, qvector, h, x, mz, sample, set_tar
 
 set_target('default-cpu-sv')
 # set_target('biren-gpu-sv') 
+# set_target('moore-threads-gpu-sv') 
 
 @quantum_kernel
 def bell():

@@ -16,15 +16,8 @@ enum PauliV2 {
   PauliZV2 = 3
 };
 
-enum BackendTypeV2 {
-  BackendCPU = 0,
-  BackendBirenGPU = 1
-};
-
 // [BUG 2026.1.31 20:35] all C functions must not be duplicated, therefore add v2
 // [UPDATE 2026.2.7 14:20] introduce measure with X/Y/Z basis
-
-void setBackend_v2(enum BackendTypeV2 backend);
 void initWithQubitSize_v2(unsigned int qubit_size);
 void seed_v2(unsigned int seed);
 int  num_qubits_v2();

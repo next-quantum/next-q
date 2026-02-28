@@ -19,21 +19,8 @@
 
 namespace ssa {
 
-SSAExecutor::SSAExecutor(BackendType backend) {
+SSAExecutor::SSAExecutor() {
     DEBUG_PRINT("[DEBUG] SSAExecutor::SSAExecutor() called");
-    
-    // 设置后端类型
-    switch (backend) {
-        case BackendType::CPU:
-            setBackend_v2(BackendCPU);
-            break;
-        case BackendType::BirenGPU:
-            setBackend_v2(BackendBirenGPU);
-            break;
-        default:
-            setBackend_v2(BackendCPU);
-            break;
-    }
     
     // 初始化随机数种子
     srand(static_cast<unsigned int>(time(nullptr)));
@@ -60,9 +47,8 @@ SSAExecutor::SSAExecutor(BackendType backend) {
 
 SSAExecutor::~SSAExecutor() {
     DEBUG_PRINT("[DEBUG] SSAExecutor::~SSAExecutor() called");
-    // [BUG 2026.2.7 9:30] 直接使用reset
+    // 只调用reset()，因为reset()已经会调用release_quantum_state()
     reset();
-    release_quantum_state();
     DEBUG_PRINT("[DEBUG] SSAExecutor::~SSAExecutor() completed");
 }
 

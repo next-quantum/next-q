@@ -1,14 +1,13 @@
 #pragma once
 
-#include <cstdint>
-#include <string>
+#include <iostream>
 
-#include <supa_runtime.h>
+#include <musa_runtime.h>
 
 // forward define some utility functions
-extern suDeviceProp getSupaDeviceProperties(int deviceID);
+extern musaDeviceProp getMusaDeviceProperties(int deviceID);
 extern bool setKernelFunctionAttributes(
-  suFuncAttributes& attrs, 
+  musaFuncAttributes& attrs, 
   const std::string& name, 
   const void* func
   // int const minThreadsPerBlock

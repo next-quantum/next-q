@@ -10,7 +10,6 @@ import warnings
 
 # 直接使用C++后端
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'ssa_simulator')))
-import ssa_simulator_cpp
 
 # 类型定义和别名
 Self = TypeVar('Self')  # 为了兼容Python 3.10，定义Self类型
@@ -2452,7 +2451,8 @@ class BackendManager:
         # 如果是 default-cpu-sv 或其他 CPU 后端，使用 SSA 模拟器
         if target in [BackendTarget.DEFAULT_CPU_SV.value]:
             if self._default_simulator is None:
-                self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+                import ssa_simulator_cpp_default_cpu_sv
+                self._default_simulator = ssa_simulator_cpp_default_cpu_sv.DefaultCPUSVSSASimulator()
             return self._default_simulator
         
         # biren-gpu-sv 后端
@@ -2460,14 +2460,52 @@ class BackendManager:
             if target not in self._simulators:
                 print(f"[BackendManager] Initializing Biren GPU SV backend")
                 try:
-                    # 创建 SSA 模拟器实例，传递 biren-gpu-sv 后端参数
-                    simulator = ssa_simulator_cpp.SSASimulator(backend_type="biren-gpu-sv")
+                    # 直接尝试使用GPU后端，不导入CPU模块
+                    import importlib
+                    # 动态导入GPU模块
+                    gpu_module = importlib.import_module('ssa_simulator_cpp_biren_gpu_sv')
+                    simulator = gpu_module.BirenGPUSVSSASimulator()
+                    
+                    # 测试模拟器是否能正常工作
+                    test_ssa = ';; Test program\ndeclare qreg q0\ndeclare mreg m0\nqgate.h q0\nmeasure.z q0, m0'
+                    if not simulator.load_ssa_assembly(test_ssa):
+                        raise Exception(f"Backend initialization failed: {simulator.get_error()}")
+                    
                     self._simulators[target] = simulator
                     print(f"[BackendManager] Biren GPU SV backend initialized successfully")
                 except Exception as e:
                     warnings.warn(f"Failed to initialize Biren GPU SV backend: {e}. Falling back to 'default-cpu-sv'.")
+                    # 只有在失败时才导入CPU模块
                     if self._default_simulator is None:
-                        self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+                        import ssa_simulator_cpp_default_cpu_sv
+                        self._default_simulator = ssa_simulator_cpp_default_cpu_sv.DefaultCPUSVSSASimulator()
+                    self._simulators[target] = self._default_simulator
+            return self._simulators[target]
+        
+        # moore-threads-gpu-sv 后端
+        if target == BackendTarget.MOORE_THREADS_GPU_SV.value:
+            if target not in self._simulators:
+                print(f"[BackendManager] Initializing Moore Threads GPU SV backend")
+                try:
+                    # 直接尝试使用GPU后端，不导入CPU模块
+                    import importlib
+                    # 动态导入GPU模块
+                    gpu_module = importlib.import_module('ssa_simulator_cpp_moorethread_gpu_sv')
+                    simulator = gpu_module.MooreThreadGPUSVSSASimulator()
+                    
+                    # 测试模拟器是否能正常工作
+                    test_ssa = ';; Test program\ndeclare qreg q0\ndeclare mreg m0\nqgate.h q0\nmeasure.z q0, m0'
+                    if not simulator.load_ssa_assembly(test_ssa):
+                        raise Exception(f"Backend initialization failed: {simulator.get_error()}")
+                    
+                    self._simulators[target] = simulator
+                    print(f"[BackendManager] Moore Threads GPU SV backend initialized successfully")
+                except Exception as e:
+                    warnings.warn(f"Failed to initialize Moore Threads GPU SV backend: {e}. Falling back to 'default-cpu-sv'.")
+                    # 只有在失败时才导入CPU模块
+                    if self._default_simulator is None:
+                        import ssa_simulator_cpp_default_cpu_sv
+                        self._default_simulator = ssa_simulator_cpp_default_cpu_sv.DefaultCPUSVSSASimulator()
                     self._simulators[target] = self._default_simulator
             return self._simulators[target]
         
@@ -2475,7 +2513,8 @@ class BackendManager:
         if target not in self._simulators:
             warnings.warn(f"Backend '{target}' is not implemented yet. Falling back to 'default-cpu-sv'.")
             if self._default_simulator is None:
-                self._default_simulator = ssa_simulator_cpp.SSASimulator(backend_type="cpu")
+                import ssa_simulator_cpp_default_cpu_sv
+                self._default_simulator = ssa_simulator_cpp_default_cpu_sv.DefaultCPUSVSSASimulator()
             self._simulators[target] = self._default_simulator
         
         return self._simulators[target]

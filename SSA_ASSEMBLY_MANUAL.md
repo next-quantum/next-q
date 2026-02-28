@@ -71,6 +71,9 @@ declare mreg m2
 | `qgate.t` | T 门 | `qgate.t q1` |
 | `qgate.s` | S 门 | `qgate.s q2` |
 | `qgate.swap` | SWAP 门（双量子比特） | `qgate.swap q0, q1` |
+| `qgate.reset` | 量子比特重置 | `qgate.reset q0` |
+| `qgate.cnot` | CNOT 门（受控X门） | `qgate.cnot q0, q1` |
+| `qgate.toffoli` | Toffoli 门（三量子比特） | `qgate.toffoli q0, q1, q2` |
 
 #### 4.1.2 旋转门
 
@@ -94,11 +97,13 @@ declare mreg m2
 
 #### 4.1.4 共轭转置门
 
-使用 `.adj` 后缀表示共轭转置：
+使用 `.adj` 后缀表示共轭转置，或使用 `sadj`/`tadj` 表示特定门的共轭转置：
 
 ```assembly
 qgate.h.adj q0          ;; Hadamard 门的共轭转置
 qgate.rx.adj q1, angle=1.5708  ;; RX 门的共轭转置
+qgate.sadj q2          ;; S 门的共轭转置
+qgate.tadj q0          ;; T 门的共轭转置
 ```
 
 ### 4.2 测量指令
@@ -106,6 +111,8 @@ qgate.rx.adj q1, angle=1.5708  ;; RX 门的共轭转置
 | 指令 | 描述 | 示例 |
 |------|------|------|
 | `measure.z` | Z 基测量 | `measure.z q0, m0` |
+| `measure.x` | X 基测量 | `measure.x q1, m1` |
+| `measure.y` | Y 基测量 | `measure.y q2, m2` |
 
 ### 4.3 经典指令
 
@@ -116,6 +123,8 @@ qgate.rx.adj q1, angle=1.5708  ;; RX 门的共轭转置
 | `mov` | 寄存器赋值 | `mov c0, m0` |
 | `mov.int32` | 32位整数常量赋值 | `mov.int32 c1, 42` |
 | `mov.float32` | 32位浮点数常量赋值 | `mov.float32 c2, 3.1416` |
+| `const.int32` | 32位整数常量定义 | `const.int32 c3, 100` |
+| `const.float32` | 32位浮点数常量定义 | `const.float32 c4, 2.71828` |
 
 #### 4.3.2 逻辑操作指令
 
@@ -132,14 +141,11 @@ qgate.rx.adj q1, angle=1.5708  ;; RX 门的共轭转置
 条件指令用于实现基于经典寄存器值的条件执行：
 
 ```assembly
-;; 条件判断：如果 c0 == 1
-if.eq c0, 1 then
-    ;; 条件为真时执行的指令
-    qgate.x q1
-else
-    ;; 条件为假时执行的指令
-    qgate.h q1
-endif
+;; 条件分支指令：如果 c0 == 1，跳转到 true_label，否则跳转到 false_label
+br.cond.int32 c0, eq, 1, true_label, false_label
+
+;; 支持的比较操作：eq (==), ne (!=), lt (<), le (<=), gt (>), ge (>=)
+br.cond.int32 c1, lt, 5, loop_start, end_loop
 ```
 
 ### 4.5 动态量子比特指令
@@ -149,6 +155,31 @@ endif
 ```assembly
 ;; 使用经典寄存器 c0 中存储的索引来选择量子比特
 qgate.x dynamic=c0
+```
+
+### 4.6 分支和标签指令
+
+用于实现控制流和循环结构：
+
+#### 4.6.1 标签指令
+
+```assembly
+;; 定义一个标签
+loop_start:
+```
+
+#### 4.6.2 无条件分支指令
+
+```assembly
+;; 无条件跳转到指定标签
+br loop_start
+```
+
+#### 4.6.3 条件分支指令
+
+```assembly
+;; 条件分支指令
+br.cond.int32 c0, eq, 1, true_label, false_label
 ```
 
 ## 5. 完整示例

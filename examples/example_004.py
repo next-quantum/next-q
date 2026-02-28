@@ -11,10 +11,10 @@ from scipy.optimize import minimize
 from typing import List
 
 from quantum_framework import quantum_kernel, qubit, qvector, h, x, mx, my, mz, sample, spin, Hamiltonian, observe, rx, rz, set_target
-import ssa_simulator_cpp
 
 set_target('default-cpu-sv')
 # set_target('biren-gpu-sv')
+# set_target('moore-threads-gpu-sv') 
 
 # We'll use the graph below to illustrate how QAOA can be used to
 # solve a max cut problem
