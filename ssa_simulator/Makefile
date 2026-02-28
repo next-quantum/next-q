@@ -91,7 +91,7 @@ PYBIND11_INCLUDE = $(shell $(PYTHON) -c "import pybind11; print(pybind11.get_inc
 # 壁仞GPU编译设置
 BIREN_CC ?= brcc
 # 从brcc命令自动获取SUPA安装路径
-BIREN_PATH = $(shell $(BIREN_CC) -v -x supa -c /dev/null 2>&1 | grep "Found SUPA installation:" | awk '{print $$4}' | sed 's/,//')
+BIREN_PATH = $(shell $(BIREN_CC) -v -x supa -c /dev/null 2>&1 | grep "Found SUPA installation:" | awk '{print $$4}' | sed 's/,//'; rm -f null.o)
 # 构造SUPA include目录路径
 BIREN_INCLUDE = $(BIREN_PATH)/include
 BIREN_FLAGS = -std=c++17 -O3 -fPIC -x supa
@@ -100,7 +100,7 @@ BIREN_LINK_FLAGS = --supa-link -O2
 # 摩尔线程GPU编译设置
 MTHREADS_CC ?= mcc
 # 从mcc命令自动获取MUSA安装路径
-MUSA_PATH = $(shell $(MTHREADS_CC) -v -x c++ -c /dev/null 2>&1 | grep "Found MUSA installation:" | awk '{print $$4}' | sed 's/,//')
+MUSA_PATH = $(shell $(MTHREADS_CC) -v -x c++ -c /dev/null 2>&1 | grep "Found MUSA installation:" | awk '{print $$4}' | sed 's/,//'; rm -f null.o)
 # 构造MUSA include目录路径
 MTHREADS_INCLUDE = $(MUSA_PATH)/include
 MTHREADS_FLAGS = -std=c++17 -O3 -fPIC -x musa
