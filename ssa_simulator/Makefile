@@ -45,13 +45,23 @@ else
     MTHREADS_SUPPORT := 0
 endif
 
+# 沐曦GPU支持
+ifdef enable-metax
+    METAX_SUPPORT := 1
+else
+    METAX_SUPPORT := 0
+endif
+
 # 基础编译选项
 CXXFLAGS = -std=c++17 -O3 -Wall -fPIC
 ifeq ($(BIREN_SUPPORT), 1)
     CXXFLAGS += -DENABLE_BIREN
 endif
 ifeq ($(MTHREADS_SUPPORT), 1)
-    CXXFLAGS += -DENABLE_MOORETHREAD
+    CXXFLAGS += -DENABLE_MTHREADS
+endif
+ifeq ($(METAX_SUPPORT), 1)
+    CXXFLAGS += -DENABLE_METAX
 endif
 
 # 调试模式选项
@@ -106,6 +116,15 @@ MTHREADS_INCLUDE = $(MUSA_PATH)/include
 MTHREADS_FLAGS = -std=c++17 -O3 -fPIC -x musa
 MTHREADS_LINK_FLAGS = -O2
 
+# 沐曦GPU编译设置
+METAX_CC ?= mxcc
+# 从mxcc命令自动获取MACA安装路径
+MACA_PATH = $(shell $(METAX_CC) -v -x maca -c /dev/null 2>&1 | grep "Found MACA installation:" | awk '{print $$4}' | sed 's/,//'; rm -f null.o)
+# 构造MACA include目录路径
+METAX_INCLUDE = $(MACA_PATH)/include
+METAX_FLAGS = -std=c++17 -O3 -fPIC -x maca -DENABLE_METAX
+METAX_LINK_FLAGS = -O2
+
 # 自动检测BR110芯片
 ifeq ($(BIREN_SUPPORT), 1)
     BIREN_GPU_NAME := $(shell brsmi gpu --query-gpu=name --format=csv,noheader 2>/dev/null)
@@ -122,6 +141,7 @@ PY_SUFFIX := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_
 TARGET_CPU = ssa_simulator_cpp_default_cpu_sv$(PY_SUFFIX)
 TARGET_BIREN_GPU = ssa_simulator_cpp_biren_gpu_sv$(PY_SUFFIX)
 TARGET_MTHREADS_GPU = ssa_simulator_cpp_mthreads_gpu_sv$(PY_SUFFIX)
+TARGET_METAX_GPU = ssa_simulator_cpp_metax_gpu_sv$(PY_SUFFIX)
 
 # 完整版本：包含所有必要的源文件，使用真正的qc_runtime_v2
 # CPU后端源文件
@@ -135,15 +155,22 @@ SU_SRCS_BIREN_GPU = qc_runtime/qc_simulator_biren_gpu_sv_v2.su qc_runtime/supa_u
 CPP_SRCS_MTHREADS_GPU = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
 MU_SRCS_MTHREADS_GPU = qc_runtime/qc_simulator_mthreads_gpu_sv_v2.mu qc_runtime/musa_utils.mu qc_runtime/qc_kernels_musa.mu
 
+# 沐曦GPU后端源文件
+CPP_SRCS_METAX_GPU = pybind11_interface.cpp ssa_parser.cpp ssa_executor.cpp qc_runtime/qc_runtime_v2.cpp qc_runtime/qc_simulator_default_cpu_sv_v2.cpp qc_runtime/qc_simulator_v2.cpp
+MACA_SRCS_METAX_GPU = qc_runtime/qc_simulator_metax_gpu_sv_v2.cpp qc_runtime/maca_utils.cpp qc_runtime/qc_kernels_maca.cpp
+
 # 目标文件
 CPP_OBJS_CPU = $(CPP_SRCS_CPU:.cpp=.cpu.o)
 CPP_OBJS_BIREN_GPU = $(CPP_SRCS_BIREN_GPU:.cpp=.biren_gpu.o)
 SU_OBJS_BIREN_GPU = $(SU_SRCS_BIREN_GPU:.su=.biren_gpu.o)
 CPP_OBJS_MTHREADS_GPU = $(CPP_SRCS_MTHREADS_GPU:.cpp=.mthreads_gpu.o)
 MU_OBJS_MTHREADS_GPU = $(MU_SRCS_MTHREADS_GPU:.mu=.mthreads_gpu.o)
+CPP_OBJS_METAX_GPU = $(CPP_SRCS_METAX_GPU:.cpp=.metax_gpu.o)
+MACA_OBJS_METAX_GPU = $(MACA_SRCS_METAX_GPU:.cpp=.metax_gpu.o)
 OBJS_CPU = $(CPP_OBJS_CPU)
 OBJS_BIREN_GPU = $(CPP_OBJS_BIREN_GPU) $(SU_OBJS_BIREN_GPU)
 OBJS_MTHREADS_GPU = $(CPP_OBJS_MTHREADS_GPU) $(MU_OBJS_MTHREADS_GPU)
+OBJS_METAX_GPU = $(CPP_OBJS_METAX_GPU) $(MACA_OBJS_METAX_GPU)
 
 # 头文件包含路径
 INCLUDES = -I$(PYTHON_INCLUDE) -I$(PYBIND11_INCLUDE) -I.
@@ -153,6 +180,9 @@ endif
 ifeq ($(MTHREADS_SUPPORT), 1)
     INCLUDES += -I$(MTHREADS_INCLUDE)
 endif
+ifeq ($(METAX_SUPPORT), 1)
+    INCLUDES += -I$(METAX_INCLUDE)
+endif
 
 # 链接库路径
 ifeq ($(OS_TYPE),macOS)
@@ -160,11 +190,13 @@ ifeq ($(OS_TYPE),macOS)
     LIBS = 
     BIREN_LIBS = $(LIBS)
     MTHREADS_LIBS = $(LIBS) -lmusart
+    METAX_LIBS = $(LIBS) -lmcruntime
 else
     # Linux/Windows 使用常规链接方式
     LIBS = $(if $(PYTHON_LIB),-L$(PYTHON_LIB),) $(PYTHON_LD) $(PYTHON_LDFLAGS)
     BIREN_LIBS = $(LIBS)
     MTHREADS_LIBS = $(LIBS) -lmusart
+    METAX_LIBS = $(LIBS) -lmcruntime
 endif
 
 # 默认目标
@@ -178,6 +210,11 @@ endif
 # 构建摩尔线程GPU后端（如果启用）
 ifeq ($(MTHREADS_SUPPORT), 1)
 all: $(TARGET_MTHREADS_GPU)
+endif
+
+# 构建沐曦GPU后端（如果启用）
+ifeq ($(METAX_SUPPORT), 1)
+all: $(TARGET_METAX_GPU)
 endif
 
 # 调试模式目标
@@ -196,6 +233,12 @@ qc_runtime/%.biren_gpu.o: qc_runtime/%.cpp
 
 qc_runtime/%.mthreads_gpu.o: qc_runtime/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+%.metax_gpu.o: %.cpp
+	$(METAX_CC) $(METAX_FLAGS) $(INCLUDES) -c $< -o $@
+
+qc_runtime/%.metax_gpu.o: qc_runtime/%.cpp
+	$(METAX_CC) $(METAX_FLAGS) $(INCLUDES) -c $< -o $@
 
 # SU文件编译规则（壁仞GPU）- 仅当启用壁仞支持时，用 brcc 编译
 ifeq ($(BIREN_SUPPORT), 1)
@@ -244,6 +287,16 @@ else
 endif
 endif
 
+# 链接规则 - 沐曦GPU后端（仅当启用沐曦支持时）
+ifeq ($(METAX_SUPPORT), 1)
+$(TARGET_METAX_GPU): $(OBJS_METAX_GPU)
+ifeq ($(OS_TYPE),macOS)
+	$(METAX_CC) $(METAX_LINK_FLAGS) -shared $(OBJS_METAX_GPU) $(METAX_LIBS) -undefined dynamic_lookup -o $(TARGET_METAX_GPU)
+else
+	$(METAX_CC) $(METAX_LINK_FLAGS) -shared $(OBJS_METAX_GPU) $(METAX_LIBS) -o $(TARGET_METAX_GPU)
+endif
+endif
+
 # 二进制目标
 BIN_CPP_OBJS = ssa_parser.cpu.o ssa_executor.cpu.o qc_runtime/qc_runtime_v2.cpu.o qc_runtime/qc_simulator_default_cpu_sv_v2.cpu.o qc_runtime/qc_simulator_v2.cpu.o
 BIN_OBJS = $(BIN_CPP_OBJS)
@@ -258,7 +311,7 @@ ssa_simulation_runner$(EXE_EXT): ssa_simulation_runner.cpu.o $(BIN_OBJS)
 
 # 清理规则
 clean:
-	$(RM) *.cpu.o *.biren_gpu.o *.mthreads_gpu.o qc_runtime/*.cpu.o qc_runtime/*.biren_gpu.o qc_runtime/*.mthreads_gpu.o $(SU_OBJS_BIREN_GPU) $(MU_OBJS_MTHREADS_GPU) $(TARGET_CPU) $(TARGET_BIREN_GPU) $(TARGET_MTHREADS_GPU) $(BIN_OBJS) ssa_simulation_runner.cpu.o ssa_simulation_runner$(EXE_EXT)
+	$(RM) *.cpu.o *.biren_gpu.o *.mthreads_gpu.o *.metax_gpu.o qc_runtime/*.cpu.o qc_runtime/*.biren_gpu.o qc_runtime/*.mthreads_gpu.o qc_runtime/*.metax_gpu.o $(SU_OBJS_BIREN_GPU) $(MU_OBJS_MTHREADS_GPU) $(MACA_OBJS_METAX_GPU) $(TARGET_CPU) $(TARGET_BIREN_GPU) $(TARGET_MTHREADS_GPU) $(TARGET_METAX_GPU) $(BIN_OBJS) ssa_simulation_runner.cpu.o ssa_simulation_runner$(EXE_EXT)
 
 # 测试规则
 test:
@@ -271,6 +324,10 @@ endif
 ifeq ($(MTHREADS_SUPPORT), 1)
 	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); import ssa_simulator_cpp_mthreads_gpu_sv; print('Moore Thread GPU module imported successfully!')"
 	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); from ssa_simulator_cpp_mthreads_gpu_sv import MooreThreadGPUSVSSASimulator; sim = MooreThreadGPUSVSSASimulator(); print('Moore Thread GPU SSASimulator created successfully!')"
+endif
+ifeq ($(METAX_SUPPORT), 1)
+	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); import ssa_simulator_cpp_metax_gpu_sv; print('Metax GPU module imported successfully!')"
+	$(PYTHON) -c "import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath('.'))); from ssa_simulator_cpp_metax_gpu_sv import MetaxGPUSVSSASimulator; sim = MetaxGPUSVSSASimulator(); print('Metax GPU SSASimulator created successfully!')"
 endif
 
 # 显示变量
@@ -291,17 +348,28 @@ show:
 	@echo "MTHREADS_FLAGS: $(MTHREADS_FLAGS)"
 	@echo "MTHREADS_LINK_FLAGS: $(MTHREADS_LINK_FLAGS)"
 	@echo "MTHREADS_LIBS: $(MTHREADS_LIBS)"
+	@echo "METAX_SUPPORT: $(METAX_SUPPORT)"
+	@echo "METAX_CC: $(METAX_CC)"
+	@echo "MACA_PATH: $(MACA_PATH)"
+	@echo "METAX_INCLUDE: $(METAX_INCLUDE)"
+	@echo "METAX_FLAGS: $(METAX_FLAGS)"
+	@echo "METAX_LINK_FLAGS: $(METAX_LINK_FLAGS)"
+	@echo "METAX_LIBS: $(METAX_LIBS)"
 	@echo "PYTHON: $(PYTHON)"
 	@echo "PYTHON_INCLUDE: $(PYTHON_INCLUDE)"
 	@echo "PYBIND11_INCLUDE: $(PYBIND11_INCLUDE)"
 	@echo "TARGET_CPU: $(TARGET_CPU)"
 	@echo "TARGET_BIREN_GPU: $(TARGET_BIREN_GPU)"
 	@echo "TARGET_MTHREADS_GPU: $(TARGET_MTHREADS_GPU)"
+	@echo "TARGET_METAX_GPU: $(TARGET_METAX_GPU)"
 	@echo "CPP_SRCS_CPU: $(CPP_SRCS_CPU)"
 	@echo "CPP_SRCS_BIREN_GPU: $(CPP_SRCS_BIREN_GPU)"
 	@echo "SU_SRCS_BIREN_GPU: $(SU_SRCS_BIREN_GPU)"
 	@echo "CPP_SRCS_MTHREADS_GPU: $(CPP_SRCS_MTHREADS_GPU)"
 	@echo "MU_SRCS_MTHREADS_GPU: $(MU_SRCS_MTHREADS_GPU)"
+	@echo "CPP_SRCS_METAX_GPU: $(CPP_SRCS_METAX_GPU)"
+	@echo "MACA_SRCS_METAX_GPU: $(MACA_SRCS_METAX_GPU)"
 	@echo "OBJS_CPU: $(OBJS_CPU)"
 	@echo "OBJS_BIREN_GPU: $(OBJS_BIREN_GPU)"
 	@echo "OBJS_MTHREADS_GPU: $(OBJS_MTHREADS_GPU)"
+	@echo "OBJS_METAX_GPU: $(OBJS_METAX_GPU)"

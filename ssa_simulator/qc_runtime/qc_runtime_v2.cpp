@@ -6,8 +6,12 @@
 #include "qc_simulator_biren_gpu_sv_v2.hpp"
 #endif
 
-#ifdef ENABLE_MOORETHREAD
+#ifdef ENABLE_MTHREADS
 #include "qc_simulator_mthreads_gpu_sv_v2.hpp"
+#endif
+
+#ifdef ENABLE_METAX
+#include "qc_simulator_metax_gpu_sv_v2.hpp"
 #endif
 
 #include <cassert>
@@ -63,7 +67,12 @@ static inline Term convertArrayToTerm(std::uint64_t const n, PauliV2 const b[], 
 void initWithQubitSize_v2(unsigned int qubit_size) {
   assert(QC_V2::simulator == nullptr);
 
-  #ifdef ENABLE_MOORETHREAD
+  #ifdef ENABLE_METAX
+  // Use Metax GPU backend when enabled
+  QC_V2::simulator = std::make_unique<QC_V2::SimulatorMetaxGPUSVV2>(
+    static_cast<std::uint64_t>(qubit_size)
+  );
+  #elif ENABLE_MTHREADS
   // Use Moore Thread GPU backend when enabled
   QC_V2::simulator = std::make_unique<QC_V2::SimulatorMooreThreadGPUSVV2>(
     static_cast<std::uint64_t>(qubit_size)

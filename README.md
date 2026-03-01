@@ -7,7 +7,7 @@ NEXT-Q 是一款面向未来的量子计算框架，致力于构建量子计算�
 ## 项目特点
 
 - **前沿技术架构**：创新性地采用 SSA（静态单赋值）汇编作为量子计算的中间表示，实现了量子算法的高效编译和优化
-- **多平台支持**：提供 CPU 和多种 GPU 后端，包括壁仞和摩尔线程 GPU，实现量子计算的高性能跨平台执行
+- **多平台支持**：提供 CPU 和多种 GPU 后端，包括壁仞、摩尔线程和沐曦 GPU，实现量子计算的高性能跨平台执行
 - **直观编程范式**：兼容 CUDA-Q 风格的量子内核函数定义，使用 Python 装饰器语法，降低量子算法开发门槛
 - **高性能执行**：基于 C++ 实现的后端模拟器，提供高效的量子电路模拟，支持大规模量子算法的测试和验证
 - **模块化设计**：核心功能模块化，易于理解和扩展，为量子计算研究和教育提供理想平台
@@ -51,29 +51,7 @@ SSA（静态单赋值）汇编是 NEXT-Q 框架的核心创新，为量子计算
 
 #### C++ 后端编译
 
-使用 `Makefile` 编译 C++ 后端：
-
-```bash
-cd ssa_simulator
-make -j # 编译所有目标（仅CPU后端）
-make clean  # 清理编译产物
-```
-
-如需启用壁仞GPU后端编译，请使用以下命令：
-
-```bash
-cd ssa_simulator
-make -j enable-biren=1  # 编译壁仞GPU后端
-make clean enable-biren=1 # 清理编译产物
-```
-
-如需启用摩尔线程GPU后端编译，请使用以下命令：
-
-```bash
-cd ssa_simulator
-make -j enable-mthreads=1  # 编译摩尔线程GPU后端
-make clean enable-mthreads=1 # 清理编译产物
-```
+使用 `Makefile` 编译 C++ 后端，详细编译命令请参考[快速开始](#快速开始)部分。
 
 编译产物包括 Python 扩展模块和独立的 SSA 模拟执行器。
 
@@ -126,23 +104,12 @@ make clean enable-mthreads=1 # 清理编译产物
 
 NEXT-Q框架支持多种计算后端，为量子算法的执行提供灵活的硬件选择：
 
-### 1. default-cpu-sv（CPU向量态模拟器）
-- **通用计算后端**：默认后端，适用于各种环境
-- **基于CPU实现**：采用优化的向量态表示，确保在通用硬件上的可靠执行
-- **调试友好**：适合小规模量子电路的开发、测试和调试
-- **跨平台兼容**：在任何支持C++的平台上均可运行
-
-### 2. biren-gpu-sv（壁仞GPU向量态模拟器）
-- **高性能计算后端**：利用壁仞GPU的并行计算能力
-- **硬件加速**：针对壁仞GPU架构优化，提供显著的性能提升
-- **大规模模拟**：支持更大规模的量子电路模拟，加速算法开发和验证
-- **国产硬件支持**：为国产GPU提供量子计算应用场景
-
-### 3. mthreads-gpu-sv（摩尔线程GPU向量态模拟器）
-- **高性能计算后端**：利用摩尔线程GPU的并行计算能力
-- **硬件加速**：针对摩尔线程GPU架构优化，提供显著的性能提升
-- **大规模模拟**：支持更大规模的量子电路模拟，加速算法开发和验证
-- **多平台适配**：为不同GPU架构提供统一的量子计算接口
+| 后端名称 | 描述 | 特点 |
+|---------|------|------|
+| default-cpu-sv | CPU向量态模拟器 | 通用计算后端，基于CPU实现，调试友好，跨平台兼容 |
+| biren-gpu-sv | 壁仞GPU向量态模拟器 | 高性能计算后端，硬件加速，大规模模拟，国产硬件支持 |
+| mthreads-gpu-sv | 摩尔线程GPU向量态模拟器 | 高性能计算后端，硬件加速，大规模模拟，多平台适配 |
+| metax-gpu-sv | 沐曦GPU向量态模拟器 | 高性能计算后端，硬件加速，大规模模拟，国产硬件支持 |
 
 ### 切换方法
 
@@ -159,6 +126,9 @@ set_target('biren-gpu-sv')
 
 # 或者，使用摩尔线程GPU后端
 set_target('mthreads-gpu-sv')
+
+# 或者，使用沐曦GPU后端
+set_target('metax-gpu-sv')
 ```
 
 注意：使用GPU后端前，需要先编译对应的GPU后端。
@@ -203,6 +173,15 @@ make -j enable-mthreads=1
 cd ..
 ```
 
+如需启用沐曦GPU后端编译，请使用：
+
+```bash
+# 编译沐曦GPU后端
+cd ssa_simulator
+make -j enable-metax=1
+cd ..
+```
+
 ### 基本用法
 
 NEXT-Q 框架提供了简洁直观的编程接口，让您轻松上手量子计算：
@@ -216,6 +195,8 @@ make  # 仅CPU后端
 make -j enable-biren=1  # 启用壁仞GPU后端
 # 或
 make -j enable-mthreads=1  # 启用摩尔线程GPU后端
+# 或
+make -j enable-metax=1  # 启用沐曦GPU后端
 cd ..
 ```
 
@@ -228,6 +209,7 @@ from quantum_framework import quantum_kernel, qvector, h, x, mz, sample, set_tar
 set_target('default-cpu-sv')  # 使用CPU后端（默认）
 # set_target('biren-gpu-sv')     # 或使用壁仞GPU后端
 # set_target('mthreads-gpu-sv')  # 或使用摩尔线程GPU后端
+# set_target('metax-gpu-sv')     # 或使用沐曦GPU后端
 
 @quantum_kernel
 def my_quantum_program():

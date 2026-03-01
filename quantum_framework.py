@@ -2382,7 +2382,7 @@ class BackendTarget(enum.Enum):
     AMD_GPU_SV = 'amd-gpu-sv'
     BIREN_GPU_SV = 'biren-gpu-sv'
     METAX_GPU_SV = 'metax-gpu-sv'
-    MOORE_THREADS_GPU_SV = 'mthreads-gpu-sv'
+    MTHREADS_GPU_SV = 'mthreads-gpu-sv'
     ILUVATAR_GPU_SV = 'iluvatar-gpu-sv'
     APPLE_GPU_SV = 'apple-gpu-sv'
     OPENCL_SV = 'opencl-sv'
@@ -2483,7 +2483,7 @@ class BackendManager:
             return self._simulators[target]
         
         # mthreads-gpu-sv 后端
-        if target == BackendTarget.MOORE_THREADS_GPU_SV.value:
+        if target == BackendTarget.MTHREADS_GPU_SV.value:
             if target not in self._simulators:
                 print(f"[BackendManager] Initializing Moore Threads GPU SV backend")
                 try:
@@ -2502,6 +2502,33 @@ class BackendManager:
                     print(f"[BackendManager] Moore Threads GPU SV backend initialized successfully")
                 except Exception as e:
                     warnings.warn(f"Failed to initialize Moore Threads GPU SV backend: {e}. Falling back to 'default-cpu-sv'.")
+                    # 只有在失败时才导入CPU模块
+                    if self._default_simulator is None:
+                        import ssa_simulator_cpp_default_cpu_sv
+                        self._default_simulator = ssa_simulator_cpp_default_cpu_sv.DefaultCPUSVSSASimulator()
+                    self._simulators[target] = self._default_simulator
+            return self._simulators[target]
+        
+        # metax-gpu-sv 后端
+        if target == BackendTarget.METAX_GPU_SV.value:
+            if target not in self._simulators:
+                print(f"[BackendManager] Initializing Metax GPU SV backend")
+                try:
+                    # 直接尝试使用GPU后端，不导入CPU模块
+                    import importlib
+                    # 动态导入GPU模块
+                    gpu_module = importlib.import_module('ssa_simulator_cpp_metax_gpu_sv')
+                    simulator = gpu_module.MetaxGPUSVSSASimulator()
+                    
+                    # 测试模拟器是否能正常工作
+                    test_ssa = ';; Test program\ndeclare qreg q0\ndeclare mreg m0\nqgate.h q0\nmeasure.z q0, m0'
+                    if not simulator.load_ssa_assembly(test_ssa):
+                        raise Exception(f"Backend initialization failed: {simulator.get_error()}")
+                    
+                    self._simulators[target] = simulator
+                    print(f"[BackendManager] Metax GPU SV backend initialized successfully")
+                except Exception as e:
+                    warnings.warn(f"Failed to initialize Metax GPU SV backend: {e}. Falling back to 'default-cpu-sv'.")
                     # 只有在失败时才导入CPU模块
                     if self._default_simulator is None:
                         import ssa_simulator_cpp_default_cpu_sv

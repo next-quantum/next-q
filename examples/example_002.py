@@ -8,7 +8,8 @@ from quantum_framework import quantum_kernel, qvector, h, x, mz, sample, set_tar
 
 set_target('default-cpu-sv')
 # set_target('biren-gpu-sv') 
-# set_target('mthreads-gpu-sv') 
+# set_target('mthreads-gpu-sv')
+# set_target('metax-gpu-sv') 
 
 @quantum_kernel
 def ghz(num_qubits: int):
